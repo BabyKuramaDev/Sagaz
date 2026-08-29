@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "toybox": {
+      "command": "node",
+      "args": ["packages/toybox/dist/index.js"],
+      "env": { "TOYBOX_DB": "./toybox.db" }
+    }
+  }
+}

@@ -1,9 +1,8 @@
 {
   "mcpServers": {
-    "toybox": {
+    "sagaz": {
       "command": "node",
-      "args": ["packages/toybox/dist/index.js"],
-      "env": { "TOYBOX_DB": "./toybox.db" }
+      "args": ["packages/cli/dist/index.js", "serve", "--config", "sagaz.config.json"]
     }
   }
 }

@@ -16,7 +16,7 @@ State lives in `$TOYBOX_DB` (default `./toybox.db`). Seed data is the same every
 claude mcp add toybox -e TOYBOX_DB=/absolute/path/toybox.db -- node /absolute/path/packages/toybox/dist/index.js
 ```
 
-or in `.mcp.json`:
+The repo's own `.mcp.json` registers the toybox **through Sagaz** (`sagaz serve --config sagaz.config.json`) — that is the intended demo path. To register it directly instead:
 
 ```json
 { "mcpServers": { "toybox": { "command": "node", "args": ["packages/toybox/dist/index.js"], "env": { "TOYBOX_DB": "./toybox.db" } } } }
