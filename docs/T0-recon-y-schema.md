@@ -121,6 +121,16 @@ CREATE INDEX idx_effects_undo    ON effects (undo_status)
 4. **Preguntas abiertas #2 y #4: respondidas** (registrar todo; packs JSON-first). Quedan abiertas #1 (nombre — verificar npm/dominio), #3 (checkpoint automático: propuesta = auto por sesión + manual por CLI) y #5 (resuelta en espíritu por la frase de convivencia).
 5. **Nuevo riesgo en tabla:** "agentsgate pivotea a compensaciones" — mitigación: velocidad + concepto nombrado + post de lanzamiento que instale el vocabulario antes.
 
+## 4b. Enmiendas post-implementación (T4)
+
+Al implementar el schema (ticket T4) aparecieron dos puntos donde el DDL congelado y el ciclo de vida del efecto no cerraban solos. Se resolvieron con **convenciones** (sin cambiar una línea del SQL), validadas por Jero el 29-08-2026. Son parte del contrato del ledger: `sagaz verify` las asume.
+
+1. **Sentinel `''` para `prev_hash`/`hash` mientras el efecto está `pending`.** El ciclo de vida es INSERT al recibir el `tools/call` (status `pending`, `seq` asignado) → UPDATE al cerrar (`result_json`, `ts_end`, `status`, y recién ahí `prev_hash` + `hash`). Como ambas columnas son `NOT NULL`, una fila pending guarda `''` en las dos. Se prefiere al nullable porque `NOT NULL` fuerza la escritura explícita y `''` nunca colisiona con un hash real (siempre 64 hex). Un efecto que quedó `pending` para siempre es dato honesto de un crash y no se limpia; `verify` marca como inconsistente cualquier fila `pending` con hash/`ts_end`, o cerrada sin hash.
+
+2. **La cadena sigue el orden de cierre, no el `seq`.** Los clientes hacen tool calls concurrentes: un efecto puede cerrar antes que otro de `seq` menor, y uno colgado (crash) no debe bloquear el hasheo de los sanos. Por eso `prev_hash` es el hash del **último efecto cerrado** de la sesión (o `genesis_hash` para el primero), y el `seq` viaja dentro del payload canónico, con lo que el orden de emisión sigue siendo tamper-evident. La cola de la cadena se mantiene en memoria por sesión en el proceso que la abrió (único escritor; better-sqlite3 es síncrono); otro proceso no puede extender una sesión ajena. `verify` no ordena por `seq` ni por `ts_end`: reconstruye la cadena siguiendo los links `prev_hash → hash` desde `genesis_hash` y exige que todos los efectos cerrados sean alcanzables.
+
+Formato canónico exacto (claves, orden, escapes, `genesis_hash`): documentado en `packages/core/src/ledger/hash.ts`. Truncamiento de `result_json`: marcador JSON `{"$truncated":{"original_bytes","kept_bytes"},"prefix"}`, hasheado como se almacena.
+
 ## 5. Checklist de cierre de T0
 
 - [x] Código de agentsgate leído (proxy, store, checkpoint, shadow, rollback, adapters, intelligence)
