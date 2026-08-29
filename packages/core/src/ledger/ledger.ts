@@ -260,8 +260,9 @@ export class Ledger {
    * Why the two branches below: a session missing from `tails` was not opened here, so the
    * caller is either a test driving a pre-existing session or another process trying to extend
    * one. If nothing was ever closed, the tail is unambiguous (genesis) and adopting it is safe.
-   * If something was closed, the real tail lives only in the memory of the process that closed
-   * it — extending from a guess would fork the chain — so we refuse.
+   * If something was closed we deliberately do NOT re-derive the tail from the rows (verify
+   * could): the invariant is one writer per chain, and a second appender — even with the right
+   * tail — could race the first and fork it. So we refuse.
    */
   private tail(sessionId: string): string {
     const tail = this.tails.get(sessionId);

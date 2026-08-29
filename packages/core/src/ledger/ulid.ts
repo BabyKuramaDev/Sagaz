@@ -28,7 +28,7 @@ export function ulid(now: number = Date.now()): string {
   if (now === lastTime) {
     // Increment the 80-bit random part as a big-endian integer of 16 base32 digits.
     // If every digit is already 31 the carry wraps to all zeros — monotonicity would break for
-    // that one id. Probability 32^-16 per millisecond; accepted rather than handled.
+    // that one id. Needs ~32^16 ids in one millisecond; accepted rather than handled.
     for (let i = lastRandom.length - 1; i >= 0; i--) {
       const digit = lastRandom[i] ?? 0;
       if (digit < 31) {
