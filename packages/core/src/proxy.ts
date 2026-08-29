@@ -1,7 +1,7 @@
 /**
  * The Sagaz interceptor: an MCP server towards the client, an MCP client towards each
- * downstream server. Phase 0: transparent pass-through of tools/list and tools/call, with
- * every call recorded in the effect ledger.
+ * downstream server. Transparent pass-through of tools/list and tools/call; every call is
+ * classified (R/C/I, see classifier/) and recorded in the effect ledger.
  *
  * Tool naming is passthrough by design: names are stable regardless of how many servers are
  * configured. A collision between two downstream servers is a startup error that points the
@@ -21,6 +21,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { PREFIX_SEPARATOR, type SagazConfig, type ServerConfig } from "./config.js";
+import { classify } from "./classifier/index.js";
 import { configHash, type Ledger } from "./ledger/index.js";
 
 export const PROXY_NAME = "sagaz";
@@ -207,9 +208,8 @@ export class SagazProxy {
     // record anyway rather than silently skipping ("everything is recorded").
     if (this.ledger && !this.sessionId) this.openSession("first tools/call before initialized");
 
-    // CLASSIFIER HOOK (T7 replaces this block). Phase 0 uses the crudest signal only:
-    // readOnlyHint → 'read'; everything else stays NULL. The class must be decided here,
-    // before begin(): it is sealed into the row's hash when the effect closes.
+    // Classification happens here, before begin(): the class is sealed into the row's hash
+    // when the effect closes. Phase 1: annotate only, never block.
     const effectId =
       this.ledger && this.sessionId
         ? this.ledger.begin({
@@ -217,10 +217,12 @@ export class SagazProxy {
             server: route.server,
             tool: route.downstreamName,
             args,
-            classification:
-              route.tool.annotations?.readOnlyHint === true
-                ? { class: "read", source: "annotation", reason: "readOnlyHint: true" }
-                : undefined,
+            classification: classify({
+              tool: route.downstreamName,
+              server: route.server,
+              annotations: route.tool.annotations,
+              rules: this.config.rules,
+            }),
           })
         : undefined;
 

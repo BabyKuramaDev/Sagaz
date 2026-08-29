@@ -1,7 +1,7 @@
 /**
  * @sagaz/core — MCP proxy + effect ledger.
  *
- * Phase 0: transparent pass-through proxy + effect ledger v1.
+ * Transparent pass-through proxy + R/C/I classifier (levels 1–3) + effect ledger v1.
  */
 
 import { createRequire } from "node:module";
@@ -15,9 +15,11 @@ export {
   PREFIX_SEPARATOR,
   loadConfig,
   parseConfig,
+  type ClassificationRule,
   type LedgerConfig,
   type SagazConfig,
   type ServerConfig,
 } from "./config.js";
+export * from "./classifier/index.js";
 export * from "./ledger/index.js";
 export { PROXY_NAME, SagazProxy, ToolCollisionError, buildRoutes, exposedName, type ProxyOptions } from "./proxy.js";

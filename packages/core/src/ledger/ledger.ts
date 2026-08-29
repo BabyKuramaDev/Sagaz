@@ -70,7 +70,7 @@ export interface BeginEffectInput {
   server: string;
   tool: string;
   args: unknown;
-  /** Decided by the proxy before the call is forwarded; part of the hashed payload. Phase 0 only ever sets 'read'. */
+  /** Decided by the proxy (classifier/) before the call is forwarded; part of the hashed payload. */
   classification?: { class: EffectClass; source: ClassSource; reason: string } | undefined;
 }
 

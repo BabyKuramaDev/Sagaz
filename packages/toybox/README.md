@@ -24,23 +24,23 @@ The repo's own `.mcp.json` registers the toybox **through Sagaz** (`sagaz serve 
 
 ## Tools and the R/C/I taxonomy
 
-The world is built so that each domain lands in one class of the taxonomy on purpose.
+The world is built so that each domain lands in one class of the taxonomy on purpose. The **Class** column is the *intended* class — what a complete Sagaz (packs + capture hooks) should reach; today's name heuristics land on `unknown` where an inverse needs pre-state, as noted.
 
 | Tool | Domain | Class | MCP annotations | Why |
 |---|---|---|---|---|
 | `list_contacts` | CRM | read | `readOnlyHint: true` | correctly annotated read |
 | `create_contact` | CRM | **R** | *none* | inverse: `delete_contact` |
-| `update_contact` | CRM | **R** | *none* | inverse: `update_contact` with the previous values (needs capture; `company: null` clears) |
-| `delete_contact` | CRM | **R** | `destructiveHint: true` | inverse: `create_contact` with the deleted row (needs capture) |
+| `update_contact` | CRM | **R** | *none* | inverse: `update_contact` with the previous values (needs capture — by name alone the classifier says `unknown`) |
+| `delete_contact` | CRM | **R** | `destructiveHint: true` | inverse: `create_contact` with the deleted row (needs capture — by name alone the classifier says `unknown`) |
 | `send_email` | Comms | **C** | *none* | cannot be unsent; a correction can be sent with `in_reply_to` |
 | `list_inbox` | Comms | read | `readOnlyHint: true` | correctly annotated read |
 | `post_tweet` | Comms | **C** | *none* | can be deleted afterwards (soft delete), but it was public meanwhile |
-| `delete_tweet` | Comms | **C** | `destructiveHint: true` | the deletion itself has no inverse in the world |
+| `delete_tweet` | Comms | **C** | `destructiveHint: true` | the deletion itself has no inverse in the world (by name alone: `unknown`) |
 | `list_timeline` | Comms | read | *none* | a read **without** `readOnlyHint` — the classifier must infer it |
 | `list_accounts` | Bank | read | `readOnlyHint: true` | correctly annotated read |
 | `transfer_funds` | Bank | **I** | *none* | **the trap**: moves money, nothing in the metadata says "irreversible" |
 
-**Annotations are mixed on purpose.** The Phase 1 classifier cascades annotations → name rules → (optional) LLM, and it needs both paths exercised: tools with correct hints (`list_contacts`, `list_inbox`, `list_accounts`, `delete_contact`, `delete_tweet`) and tools with none (`create_contact`, `update_contact`, `send_email`, `post_tweet`, `list_timeline`, `transfer_funds`).
+**Annotations are mixed on purpose.** The classifier cascades user rules → annotations → name heuristics → `unknown` (see [`packages/core/README.md`](../core/README.md)), and it needs both paths exercised: tools with correct hints (`list_contacts`, `list_inbox`, `list_accounts`, `delete_contact`, `delete_tweet`) and tools with none (`create_contact`, `update_contact`, `send_email`, `post_tweet`, `list_timeline`, `transfer_funds`).
 
 **Deferred:** `drop_everything` (wipe the whole world in one call, the SPEC's example of a catastrophic tool) is intentionally not implemented yet; it lands with the Phase 2 rollback demo.
 

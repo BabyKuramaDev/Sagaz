@@ -51,7 +51,9 @@ export async function ledgerCommand(parsed: Parsed, configPath: string, io: Comm
 
 function classCell(r: EffectRow, style: Style): string {
   if (r.class === null) return style.dim("-");
-  return r.class === "read" ? style.cyan("read") : style.bold(r.class);
+  if (r.class === "read") return style.cyan("read");
+  if (r.class === "unknown") return style.yellow("unknown");
+  return style.bold(r.class);
 }
 
 function statusCell(status: string, style: Style): string {
