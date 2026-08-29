@@ -141,6 +141,16 @@ export function createToyboxServer(world: World, opts: { version?: string } = {}
   // ---- Bank (type I) -------------------------------------------------------
 
   server.registerTool(
+    "list_accounts",
+    {
+      description: "List bank accounts with their current balances (in cents).",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    tool(() => world.listAccounts()),
+  );
+
+  server.registerTool(
     "transfer_funds",
     {
       description:

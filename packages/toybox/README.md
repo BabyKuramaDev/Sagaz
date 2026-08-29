@@ -37,8 +37,11 @@ The world is built so that each domain lands in one class of the taxonomy on pur
 | `post_tweet` | Comms | **C** | *none* | can be deleted afterwards (soft delete), but it was public meanwhile |
 | `delete_tweet` | Comms | **C** | `destructiveHint: true` | the deletion itself has no inverse in the world |
 | `list_timeline` | Comms | read | *none* | a read **without** `readOnlyHint` — the classifier must infer it |
+| `list_accounts` | Bank | read | `readOnlyHint: true` | correctly annotated read |
 | `transfer_funds` | Bank | **I** | *none* | **the trap**: moves money, nothing in the metadata says "irreversible" |
 
-**Annotations are mixed on purpose.** The Phase 1 classifier cascades annotations → name rules → (optional) LLM, and it needs both paths exercised: tools with correct hints (`list_contacts`, `list_inbox`, `delete_contact`, `delete_tweet`) and tools with none (`create_contact`, `update_contact`, `send_email`, `post_tweet`, `list_timeline`, `transfer_funds`).
+**Annotations are mixed on purpose.** The Phase 1 classifier cascades annotations → name rules → (optional) LLM, and it needs both paths exercised: tools with correct hints (`list_contacts`, `list_inbox`, `list_accounts`, `delete_contact`, `delete_tweet`) and tools with none (`create_contact`, `update_contact`, `send_email`, `post_tweet`, `list_timeline`, `transfer_funds`).
+
+**Deferred:** `drop_everything` (wipe the whole world in one call, the SPEC's example of a catastrophic tool) is intentionally not implemented yet; it lands with the Phase 2 rollback demo.
 
 World errors (unknown id, duplicate email, insufficient funds…) come back as tool results with `isError: true`, never as protocol errors. Deleted tweets stay in the DB flagged `[DELETED]` and the transfer log is never pruned, so `inspect` always tells the full story.

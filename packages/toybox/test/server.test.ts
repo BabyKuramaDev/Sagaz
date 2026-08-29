@@ -30,7 +30,7 @@ afterEach(async () => {
 const EXPECTED_TOOLS = [
   "list_contacts", "create_contact", "update_contact", "delete_contact",
   "send_email", "list_inbox", "post_tweet", "delete_tweet", "list_timeline",
-  "transfer_funds",
+  "list_accounts", "transfer_funds",
 ];
 
 async function call(name: string, args: Record<string, unknown> = {}): Promise<CallToolResult> {
@@ -50,6 +50,7 @@ describe("toybox MCP server", () => {
     expect(byName["delete_contact"]?.destructiveHint).toBe(true);
     expect(byName["delete_tweet"]?.destructiveHint).toBe(true);
     expect(byName["list_inbox"]?.readOnlyHint).toBe(true);
+    expect(byName["list_accounts"]?.readOnlyHint).toBe(true);
     for (const unannotated of ["create_contact", "update_contact", "send_email", "post_tweet", "list_timeline", "transfer_funds"]) {
       expect(byName[unannotated], unannotated).toBeUndefined();
     }
@@ -65,6 +66,8 @@ describe("toybox MCP server", () => {
 
     const t = await call("transfer_funds", { from_account: "acc-payroll", to_account: "acc-vendor", amount_cents: 250_000 });
     expect(JSON.parse(text(t)).amount_cents).toBe(250_000);
+    const accounts = JSON.parse(text(await call("list_accounts"))) as { id: string; balance_cents: number }[];
+    expect(accounts.map((a) => [a.id, a.balance_cents])).toEqual([["acc-ops", 500_000], ["acc-payroll", 750_000], ["acc-vendor", 250_000]]);
 
     // The world is inspectable from outside the agent.
     const dump = world.inspect();
