@@ -11,7 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { effectHash, genesisHash, sha256Hex, type HashableEffect } from "./hash.js";
-import { SCHEMA_V1 } from "./schema.js";
+import { SCHEMA_APPROVALS_V1, SCHEMA_V1 } from "./schema.js";
 import { ulid } from "./ulid.js";
 
 export const DEFAULT_LEDGER_PATH = "./.sagaz/ledger.db";
@@ -48,6 +48,33 @@ export interface LedgerOptions {
   clock?: () => string;
   /** Open for reading only: never creates the file or the schema. Throws if the file is missing. */
   readonly?: boolean;
+  /** Writable, but refuse to create the file (for `sagaz approve`: decide on an existing ledger, never start one). */
+  mustExist?: boolean;
+}
+
+export type ApprovalDecision = "allow" | "deny";
+
+export interface ApprovalRow {
+  id: string;
+  effect_id: string;
+  requested_at: string;
+  decided_at: string | null;
+  decision: ApprovalDecision | null;
+  decided_by: string | null;
+}
+
+/** An open approval joined with the effect it holds — what `sagaz pending` lists. */
+export interface PendingApproval extends ApprovalRow {
+  session_id: string;
+  server: string;
+  tool: string;
+  args_json: string;
+  class: EffectClass | null;
+  class_reason: string | null;
+}
+
+export class ApprovalError extends Error {
+  override readonly name = "ApprovalError";
 }
 
 export interface EffectFilter {
@@ -127,10 +154,12 @@ export class Ledger {
       // Never writes rows. SQLite may still create the -wal/-shm sidecars a WAL reader needs.
       this.db = new Database(path, { readonly: true });
     } else {
+      if (opts.mustExist && !existsSync(path)) throw new LedgerNotFoundError(`No ledger at ${path} — run \`sagaz serve\` first`);
       if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
       this.db = new Database(path);
       this.db.pragma("journal_mode = WAL");
       this.db.exec(SCHEMA_V1);
+      this.db.exec(SCHEMA_APPROVALS_V1);
     }
     this.db.pragma("foreign_keys = ON");
     this.now = opts.clock ?? (() => new Date().toISOString());
@@ -252,6 +281,90 @@ export class Ledger {
       params.push(filter.status);
     }
     return this.db.prepare(`SELECT * FROM effects WHERE ${where.join(" AND ")} ORDER BY seq`).all(...params) as EffectRow[];
+  }
+
+  // ---- approvals (confirm gates) --------------------------------------------
+  //
+  // Cross-process by design: the proxy inserts the request and polls; `sagaz approve/deny`
+  // (another process, its own connection) writes the decision. SQLite in WAL mode gives every
+  // poll a fresh read snapshot, so a committed decision is seen on the next tick. Approvals
+  // never touch `effects`, so the one-writer-per-chain invariant of tail() still holds.
+
+  /** Opens an approval for a pending effect. Returns the row (id is the operator's handle). */
+  requestApproval(effectId: string): ApprovalRow {
+    const effect = this.get(effectId);
+    if (!effect) throw new Error(`Effect ${effectId} not found`);
+    if (effect.status !== "pending") throw new Error(`Effect ${effectId} is already closed (${effect.status})`);
+    const id = ulid();
+    this.db.prepare("INSERT INTO approvals (id, effect_id, requested_at) VALUES (?, ?, ?)").run(id, effectId, this.now());
+    return this.getApproval(id) as ApprovalRow;
+  }
+
+  getApproval(id: string): ApprovalRow | undefined {
+    return this.db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as ApprovalRow | undefined;
+  }
+
+  /**
+   * Approvals whose EFFECT id equals `ref`, or ends with it (the CLI shows the last 8 chars of
+   * effect ids everywhere, so the handle the operator types is the one they saw). Exact wins.
+   */
+  findApprovalsByEffect(ref: string): ApprovalRow[] {
+    const exact = this.db.prepare("SELECT * FROM approvals WHERE effect_id = ? ORDER BY id").all(ref) as ApprovalRow[];
+    if (exact.length) return exact;
+    return this.db
+      .prepare("SELECT * FROM approvals WHERE substr(effect_id, -length(?)) = ? ORDER BY id")
+      .all(ref, ref) as ApprovalRow[];
+  }
+
+  listPendingApprovals(): PendingApproval[] {
+    // A ledger written before T8 (or opened readonly) may lack the table; nothing pending then.
+    const has = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'approvals'").get();
+    if (!has) return [];
+    return this.db
+      .prepare(
+        `SELECT a.*, e.session_id, e.server, e.tool, e.args_json, e.class, e.class_reason
+         FROM approvals a JOIN effects e ON e.id = a.effect_id
+         WHERE a.decided_at IS NULL ORDER BY a.id`,
+      )
+      .all() as PendingApproval[];
+  }
+
+  /**
+   * Records a decision. Atomic on `decided_at IS NULL`: if two parties race (operator vs.
+   * timeout), exactly one wins and the other gets an ApprovalError carrying the standing decision.
+   */
+  decide(id: string, decision: ApprovalDecision, decidedBy: string): ApprovalRow {
+    const info = this.db
+      .prepare("UPDATE approvals SET decided_at = ?, decision = ?, decided_by = ? WHERE id = ? AND decided_at IS NULL")
+      .run(this.now(), decision, decidedBy, id);
+    const row = this.getApproval(id);
+    if (!row) throw new ApprovalError(`Approval ${id} not found`);
+    if (info.changes === 0) throw new ApprovalError(`Already decided: ${row.decision} by ${row.decided_by ?? "?"} at ${row.decided_at ?? "?"}`);
+    return row;
+  }
+
+  /**
+   * Waits for a decision by polling. On timeout it writes `deny` by 'timeout' itself — so
+   * `sagaz pending` stops listing the call and a late `sagaz approve` is refused rather than
+   * silently ignored. If the operator wins the race at the last instant, their decision stands.
+   */
+  async waitForDecision(id: string, opts: { timeoutMs: number; pollMs?: number }): Promise<ApprovalRow> {
+    const pollMs = opts.pollMs ?? 250;
+    const deadline = Date.now() + opts.timeoutMs;
+    for (;;) {
+      const row = this.getApproval(id);
+      if (!row) throw new Error(`Approval ${id} not found`);
+      if (row.decided_at !== null) return row;
+      if (Date.now() >= deadline) {
+        try {
+          return this.decide(id, "deny", "timeout");
+        } catch (err) {
+          if (err instanceof ApprovalError) return this.getApproval(id) as ApprovalRow;
+          throw err;
+        }
+      }
+      await new Promise((r) => setTimeout(r, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
+    }
   }
 
   /**

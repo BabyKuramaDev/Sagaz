@@ -1,4 +1,4 @@
-import type { EffectRow, EffectStatus } from "@sagaz/core";
+import type { EffectRow, EffectStatus, GateMeta } from "@sagaz/core";
 import { UsageError, type Parsed } from "../args.js";
 import { formatBytes, formatDuration, formatTime, shortId, table, type Style } from "../format.js";
 import { clientLabel, openReadonlyLedger, requireSession, type CommandIO } from "./context.js";
@@ -29,15 +29,19 @@ export async function ledgerCommand(parsed: Parsed, configPath: string, io: Comm
       io.out(style.dim("no effects match"));
       return 0;
     }
+    // The gate column only appears when something was stopped: the common case stays narrow.
+    const gated = rows.some((r) => r.status === "blocked");
     io.out(
       table(
         [
           { header: "seq", align: "right" }, { header: "tool" }, { header: "server" }, { header: "class" },
           { header: "status" }, { header: "duration", align: "right" }, { header: "result", align: "right" }, { header: "id" },
+          ...(gated ? [{ header: "gate" }] : []),
         ],
         rows.map((r) => [
           String(r.seq), r.tool, r.server, classCell(r, style), statusCell(r.status, style),
           formatDuration(r.ts_start, r.ts_end), formatBytes(r.result_json === null ? null : Buffer.byteLength(r.result_json)), style.dim(shortId(r.id)),
+          ...(gated ? [r.status === "blocked" ? style.red(gateReason(r)) : ""] : []),
         ]),
         style,
       ),
@@ -60,7 +64,21 @@ function statusCell(status: string, style: Style): string {
   switch (status) {
     case "ok": return style.green("ok");
     case "error": return style.red("error");
+    case "blocked": return style.red("blocked");
     case "pending": return style.yellow("pending");
     default: return status;
+  }
+}
+
+/** Why a blocked effect was stopped, from the gate metadata the proxy stored with the reply. */
+export function gateReason(r: EffectRow): string {
+  if (r.result_json === null) return "blocked";
+  try {
+    const meta = (JSON.parse(r.result_json) as { _meta?: { sagaz?: GateMeta } })._meta?.sagaz;
+    if (!meta) return "blocked";
+    const who = meta.gate === "denied" ? `denied by ${meta.decidedBy ?? "operator"}` : meta.gate === "timeout" ? "no answer in time" : "blocked";
+    return `${who} — ${meta.policy}`;
+  } catch {
+    return "blocked";
   }
 }

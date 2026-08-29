@@ -151,3 +151,63 @@ describe("format helpers", () => {
     expect(() => parseFlags(["--tool"], ["tool"])).toThrow(/requires a value/);
   });
 });
+
+describe("sagaz pending / approve / deny", () => {
+  /** A session with one held transfer (pending effect + open approval) and one blocked-by-policy call. */
+  function seedHeld(): { effectId: string; sessionId: string } {
+    const ledger = new Ledger(join(dir, "ledger.db"), { clock });
+    const s = ledger.openSession({ clientInfo: { name: "claude-code", version: "2.0.0" } });
+    const blocked = ledger.begin({ sessionId: s.id, server: "toybox", tool: "transfer_funds", args: { amount_cents: 1 }, classification: { class: "I", source: "rule", reason: "transfer_*" } });
+    ledger.end(blocked, {
+      status: "blocked",
+      result: { content: [{ type: "text", text: "Sagaz blocked this call" }], isError: true, _meta: { sagaz: { gate: "denied", class: "I", policy: "default policy: class I → confirm", decidedBy: "jero" } } },
+    });
+    const effectId = ledger.begin({
+      sessionId: s.id, server: "toybox", tool: "transfer_funds",
+      args: { from_account: "acc-payroll", to_account: "acc-vendor", amount_cents: 250_000, memo: "a memo long enough to be cut in the table" },
+      classification: { class: "I", source: "rule", reason: "transfer_*" },
+    });
+    ledger.requestApproval(effectId);
+    ledger.close();
+    return { effectId, sessionId: s.id };
+  }
+
+  it("pending lists held calls with short id, class, summarized args and waiting time; status counts them", () => {
+    const { effectId } = seedHeld();
+    const { code, out } = sagaz("pending");
+    expect(code).toBe(0);
+    expect(out).toMatch(/id\s+tool\s+server\s+class\s+args\s+waiting/);
+    expect(out).toMatch(new RegExp(`${effectId.slice(-8)}\\s+transfer_funds\\s+toybox\\s+I\\s+from_account=acc-payroll, to_account=acc-vendor…\\s+\\S+`));
+    expect(out).toContain("1 call(s) held — sagaz approve <id> | sagaz deny <id>");
+    expect(sagaz("status").out).toMatch(/1 pending, 1 waiting for approval \(sagaz pending\)/);
+  });
+
+  it("approve/deny decide by short id, once; unknown and missing ids are errors; never creates a ledger", () => {
+    expect(sagaz("approve", "abc")).toMatchObject({ code: 1, err: expect.stringMatching(/No ledger at/) });
+    expect(existsSync(join(dir, "ledger.db"))).toBe(false);
+    const { effectId } = seedHeld();
+    expect(sagaz("approve")).toMatchObject({ code: 1, err: expect.stringMatching(/sagaz approve needs the id of a held call/) });
+    expect(sagaz("deny", "zzzzzzzz")).toMatchObject({ code: 1, err: expect.stringMatching(/^sagaz: No held call matches "zzzzzzzz"/) });
+
+    const ok = sagaz("approve", effectId.slice(-8), "--by", "jero");
+    expect(ok.code).toBe(0);
+    expect(ok.out.trim()).toBe(`approved transfer_funds ${effectId.slice(-8)} by jero`);
+    expect(sagaz("pending").out).toContain("nothing is waiting for approval");
+    expect(sagaz("deny", effectId)).toMatchObject({ code: 1, err: expect.stringMatching(/Already decided: allow by jero/) });
+
+    const ledger = new Ledger(join(dir, "ledger.db"), { readonly: true });
+    expect(ledger.findApprovalsByEffect(effectId)[0]).toMatchObject({ decision: "allow", decided_by: "jero" });
+    ledger.close();
+  });
+
+  it("ledger shows blocked in red with the gate reason, only when something was gated", () => {
+    seedHeld();
+    const plain = sagaz("ledger").out;
+    expect(plain).toMatch(/1\s+transfer_funds\s+toybox\s+I\s+blocked\s+150ms\s+\d+B\s+\S+\s+denied by jero — default policy: class I → confirm/);
+    expect(plain).toMatch(/2\s+transfer_funds\s+toybox\s+I\s+pending/);
+    const colour = spawnSync(process.execPath, [bin, "--config", configPath, "ledger"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "", FORCE_COLOR: "1" } }).stdout;
+    expect(colour).toContain("\x1b[31mblocked\x1b[39m");
+    expect(colour).toContain("\x1b[31mdenied by jero");
+    expect(sagaz("ledger", "--status", "pending").out).not.toMatch(/gate/);
+  });
+});

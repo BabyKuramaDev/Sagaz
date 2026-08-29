@@ -68,3 +68,14 @@ export function formatTime(iso: string): string {
 export function shortId(id: string): string {
   return id.slice(-8);
 }
+
+/** Elapsed time for humans waiting: `12s`, `3m 05s`, `2h 14m`. */
+export function formatWait(start: string, now: string): string {
+  const ms = Date.parse(now) - Date.parse(start);
+  if (!Number.isFinite(ms) || ms < 0) return "?";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}

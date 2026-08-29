@@ -53,3 +53,24 @@ CREATE INDEX IF NOT EXISTS idx_effects_class   ON effects (class);
 CREATE INDEX IF NOT EXISTS idx_effects_undo    ON effects (undo_status)
   WHERE undo_status IN ('proposed','approved');
 `;
+
+/**
+ * Approvals (T8 amendment, docs/T0-recon-y-schema.md §4c). A separate table: the frozen
+ * `effects` DDL and its hash are untouched. One row per `confirm` gate; the operator's
+ * decision (`sagaz approve` / `deny`) lands here from another process and the proxy polls it.
+ * `decided_by` is 'timeout' when nobody answered in time (the call is then treated as denied).
+ */
+export const SCHEMA_APPROVALS_V1 = `
+CREATE TABLE IF NOT EXISTS approvals (
+  id           TEXT PRIMARY KEY,
+  effect_id    TEXT NOT NULL REFERENCES effects(id),
+  requested_at TEXT NOT NULL,
+  decided_at   TEXT,
+  decision     TEXT CHECK (decision IN ('allow','deny')),
+  decided_by   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_approvals_effect ON approvals (effect_id);
+CREATE INDEX IF NOT EXISTS idx_approvals_open   ON approvals (requested_at)
+  WHERE decided_at IS NULL;
+`;

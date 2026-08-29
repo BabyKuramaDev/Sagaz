@@ -2,7 +2,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CORE_VERSION, ConfigError, DEFAULT_CONFIG_PATH, Ledger, LedgerNotFoundError, SagazProxy, ToolCollisionError, loadConfig } from "@sagaz/core";
 import { UsageError, parseFlags } from "./args.js";
 import { LookupError, type CommandIO } from "./commands/context.js";
+import { decideCommand } from "./commands/approve.js";
 import { ledgerCommand } from "./commands/ledger.js";
+import { pendingCommand } from "./commands/pending.js";
 import { statusCommand } from "./commands/status.js";
 import { verifyCommand } from "./commands/verify.js";
 import { colourEnabled, makeStyle } from "./format.js";
@@ -16,19 +18,23 @@ Usage:
       --session <id|last>  --tool <name>  --status <pending|ok|error|blocked|dry>  --json
   sagaz status [--last <n>]           Sessions, ledger location, overall state
   sagaz verify [--session <id|last>]  Walk the hash chain and report OK or the first break
+  sagaz pending                       Calls held by a confirm gate, waiting for you
+  sagaz approve <id> [--by <name>]    Let a held call through
+  sagaz deny <id> [--by <name>]       Refuse a held call (the agent is told, nothing runs)
 
 Options:
   --config <path>                     sagaz.config.json to use (default: ${DEFAULT_CONFIG_PATH})
   --version, --help`;
 
-const VALUE_FLAGS = ["config", "session", "tool", "status", "last"] as const;
+const VALUE_FLAGS = ["config", "session", "tool", "status", "last", "by"] as const;
+const WITH_ARG = new Set(["approve", "deny"]);
 const SHORT: Record<string, string> = { "-v": "--version", "-h": "--help", "-c": "--config" };
 
 async function main(argv: readonly string[]): Promise<number> {
   const parsed = parseFlags(argv.map((a) => SHORT[a] ?? a), VALUE_FLAGS);
   const configPath = typeof parsed.flags["config"] === "string" ? parsed.flags["config"] : DEFAULT_CONFIG_PATH;
   const [cmd, ...extra] = parsed.positional;
-  if (extra.length) throw new UsageError(`Unexpected argument: ${extra[0]}`);
+  if (extra.length && !WITH_ARG.has(cmd ?? "")) throw new UsageError(`Unexpected argument: ${extra[0]}`);
 
   if (parsed.flags["version"] || cmd === "version") {
     process.stdout.write(`sagaz ${CLI_VERSION} (core ${CORE_VERSION})\n`);
@@ -48,6 +54,12 @@ async function main(argv: readonly string[]): Promise<number> {
       return statusCommand(parsed, configPath, io);
     case "verify":
       return verifyCommand(parsed, configPath, io);
+    case "pending":
+      return pendingCommand(parsed, configPath, io);
+    case "approve":
+      return decideCommand("allow", parsed, configPath, io);
+    case "deny":
+      return decideCommand("deny", parsed, configPath, io);
     case "serve":
       return serve(configPath);
     default:

@@ -47,15 +47,53 @@ const ClassificationRuleSchema = z.object({
   reason: z.string().min(1).optional(),
 });
 
+const EffectClassSchema = z.enum(["read", "R", "C", "I", "unknown"]);
+const PolicyActionSchema = z.enum(["allow", "confirm", "block"]);
+
+/** Per-tool gate. Same matching as classification rules (exact or glob, optional server); first match wins. */
+const PolicyToolRuleSchema = z.object({
+  tool: z.string().min(1),
+  server: z.string().regex(IDENT, "server must match [A-Za-z0-9_-]+").optional(),
+  action: PolicyActionSchema,
+  /** Stored in the ledger as the gate reason; defaults to a description of the rule. */
+  reason: z.string().min(1).optional(),
+});
+
+/** Factory policy — the guardian default: irreversible calls wait for the operator, everything else flows. */
+export const DEFAULT_CLASS_POLICY: Readonly<Record<z.infer<typeof EffectClassSchema>, z.infer<typeof PolicyActionSchema>>> = {
+  read: "allow",
+  R: "allow",
+  C: "allow",
+  I: "confirm",
+  unknown: "allow",
+};
+export const DEFAULT_CONFIRM_TIMEOUT_MS = 120_000;
+
+/**
+ * Gates. `tools` is checked first (a tool rule beats the class map), then `class`, then allow.
+ * `class` entries override the factory default key by key — `{ "I": "allow" }` switches the
+ * guardian off without touching the others.
+ */
+const PolicySchema = z.object({
+  class: z.partialRecord(EffectClassSchema, PolicyActionSchema).default({}),
+  tools: z.array(PolicyToolRuleSchema).default([]),
+  /** How long a `confirm` gate waits for `sagaz approve` / `sagaz deny` before treating the call as denied. */
+  confirmTimeoutMs: z.number().int().positive().default(DEFAULT_CONFIRM_TIMEOUT_MS),
+});
+
 const ConfigSchema = z.object({
   servers: z.record(z.string().regex(IDENT, "server name must match [A-Za-z0-9_-]+"), ServerConfigSchema),
   ledger: LedgerConfigSchema.default({ path: DEFAULT_LEDGER_PATH, maxResultBytes: DEFAULT_MAX_RESULT_BYTES }),
   rules: z.array(ClassificationRuleSchema).default([]),
+  policy: PolicySchema.default({ class: {}, tools: [], confirmTimeoutMs: DEFAULT_CONFIRM_TIMEOUT_MS }),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 export type LedgerConfig = z.infer<typeof LedgerConfigSchema>;
 export type ClassificationRule = z.infer<typeof ClassificationRuleSchema>;
+export type PolicyAction = z.infer<typeof PolicyActionSchema>;
+export type PolicyToolRule = z.infer<typeof PolicyToolRuleSchema>;
+export type PolicyConfig = z.infer<typeof PolicySchema>;
 export type SagazConfig = z.infer<typeof ConfigSchema>;
 
 export class ConfigError extends Error {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { canonicalize, effectHash, genesisHash, sha256Hex } from "../src/ledger/hash.js";
-import { Ledger, PENDING_HASH, truncateJson, type TruncatedResult } from "../src/ledger/ledger.js";
+import { ApprovalError, Ledger, PENDING_HASH, truncateJson, type TruncatedResult } from "../src/ledger/ledger.js";
 import { ulid } from "../src/ledger/ulid.js";
 
 let dir: string;
@@ -186,5 +186,72 @@ describe("tamper evidence", () => {
     raw.prepare("DELETE FROM effects WHERE id = ?").run(ids[1]);
     raw.close();
     expect(ledger.verifySession(s.id)).toMatchObject({ ok: false, reason: expect.stringMatching(/unreachable from genesis/) });
+  });
+});
+
+describe("approvals (confirm gates)", () => {
+  function held(): { effectId: string; approvalId: string } {
+    const s = ledger.openSession({});
+    const effectId = ledger.begin({ sessionId: s.id, server: "bank", tool: "transfer_funds", args: { amount_cents: 5 }, classification: { class: "I", source: "rule", reason: "transfer_*" } });
+    return { effectId, approvalId: ledger.requestApproval(effectId).id };
+  }
+
+  it("requestApproval opens a row for a pending effect only; pending lists it joined with the effect", () => {
+    const { effectId, approvalId } = held();
+    expect(ledger.getApproval(approvalId)).toMatchObject({ effect_id: effectId, decided_at: null, decision: null, decided_by: null });
+    expect(ledger.listPendingApprovals()).toMatchObject([{ id: approvalId, tool: "transfer_funds", server: "bank", class: "I", args_json: '{"amount_cents":5}' }]);
+    ledger.end(effectId, { status: "blocked", result: {} });
+    expect(() => ledger.requestApproval(effectId)).toThrow(/already closed \(blocked\)/);
+    expect(() => ledger.requestApproval("nope")).toThrow(/not found/);
+  });
+
+  it("decide is once-only and atomic; a second decision reports the standing one", () => {
+    const { approvalId } = held();
+    const other = new Ledger(join(dir, "nested", "dir", "ledger.db")); // the CLI: another connection
+    try {
+      expect(other.decide(approvalId, "allow", "jero")).toMatchObject({ decision: "allow", decided_by: "jero" });
+      expect(() => ledger.decide(approvalId, "deny", "timeout")).toThrow(ApprovalError);
+      expect(() => ledger.decide(approvalId, "deny", "timeout")).toThrow(/Already decided: allow by jero/);
+      expect(() => ledger.decide("nope", "deny", "x")).toThrow(/not found/);
+      expect(ledger.listPendingApprovals()).toEqual([]);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("findApprovalsByEffect: exact id, else unique suffix (what the CLI prints)", () => {
+    const { effectId, approvalId } = held();
+    expect(ledger.findApprovalsByEffect(effectId).map((a) => a.id)).toEqual([approvalId]);
+    expect(ledger.findApprovalsByEffect(effectId.slice(-8)).map((a) => a.id)).toEqual([approvalId]);
+    expect(ledger.findApprovalsByEffect("zzzzzzzz")).toEqual([]);
+  });
+
+  it("waitForDecision resolves when another connection decides, and denies by 'timeout' otherwise", async () => {
+    const a = held();
+    const other = new Ledger(join(dir, "nested", "dir", "ledger.db"));
+    try {
+      setTimeout(() => other.decide(a.approvalId, "allow", "jero"), 30);
+      const decided = await ledger.waitForDecision(a.approvalId, { timeoutMs: 5_000, pollMs: 5 });
+      expect(decided).toMatchObject({ decision: "allow", decided_by: "jero" });
+
+      const b = held();
+      const timedOut = await ledger.waitForDecision(b.approvalId, { timeoutMs: 40, pollMs: 5 });
+      expect(timedOut).toMatchObject({ decision: "deny", decided_by: "timeout" });
+      expect(timedOut.decided_at).not.toBeNull();
+      // Late approval is refused, not silently swallowed.
+      expect(() => other.decide(b.approvalId, "allow", "jero")).toThrow(/Already decided: deny by timeout/);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("mustExist refuses to create a ledger; readonly ledgers without the table report nothing pending", () => {
+    expect(() => new Ledger(join(dir, "missing.db"), { mustExist: true })).toThrow(/No ledger at/);
+    const raw = new Database(join(dir, "old.db"));
+    raw.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, started_at TEXT NOT NULL, client_info TEXT, config_hash TEXT, genesis_hash TEXT NOT NULL)");
+    raw.close();
+    const old = new Ledger(join(dir, "old.db"), { readonly: true });
+    expect(old.listPendingApprovals()).toEqual([]);
+    old.close();
   });
 });
