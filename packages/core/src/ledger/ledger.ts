@@ -70,7 +70,7 @@ export interface BeginEffectInput {
   server: string;
   tool: string;
   args: unknown;
-  /** Phase 0: only 'read' via readOnlyHint is ever set. */
+  /** Decided by the proxy before the call is forwarded; part of the hashed payload. Phase 0 only ever sets 'read'. */
   classification?: { class: EffectClass; source: ClassSource; reason: string } | undefined;
 }
 
@@ -254,7 +254,15 @@ export class Ledger {
     return this.db.prepare(`SELECT * FROM effects WHERE ${where.join(" AND ")} ORDER BY seq`).all(...params) as EffectRow[];
   }
 
-  /** Current chain tail of a session. Only sessions opened by this instance can be appended to. */
+  /**
+   * Current chain tail of a session. Only sessions opened by this instance can be appended to.
+   *
+   * Why the two branches below: a session missing from `tails` was not opened here, so the
+   * caller is either a test driving a pre-existing session or another process trying to extend
+   * one. If nothing was ever closed, the tail is unambiguous (genesis) and adopting it is safe.
+   * If something was closed, the real tail lives only in the memory of the process that closed
+   * it — extending from a guess would fork the chain — so we refuse.
+   */
   private tail(sessionId: string): string {
     const tail = this.tails.get(sessionId);
     if (tail !== undefined) return tail;

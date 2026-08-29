@@ -3,6 +3,25 @@
   "version": "0.0.0",
   "description": "Sagaz core: MCP proxy and effect ledger",
   "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BabyKuramaDev/Sagaz.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/BabyKuramaDev/Sagaz#readme",
+  "bugs": "https://github.com/BabyKuramaDev/Sagaz/issues",
+  "keywords": [
+    "mcp",
+    "proxy",
+    "agents",
+    "undo",
+    "effect-ledger",
+    "sqlite"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,7 +31,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20"
   },

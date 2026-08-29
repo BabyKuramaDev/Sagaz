@@ -207,7 +207,9 @@ export class SagazProxy {
     // record anyway rather than silently skipping ("everything is recorded").
     if (this.ledger && !this.sessionId) this.openSession("first tools/call before initialized");
 
-    // Phase 0 classification: the crudest signal only — readOnlyHint → 'read'. Everything else NULL.
+    // CLASSIFIER HOOK (T7 replaces this block). Phase 0 uses the crudest signal only:
+    // readOnlyHint → 'read'; everything else stays NULL. The class must be decided here,
+    // before begin(): it is sealed into the row's hash when the effect closes.
     const effectId =
       this.ledger && this.sessionId
         ? this.ledger.begin({
