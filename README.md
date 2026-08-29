@@ -8,7 +8,7 @@ The goal: one undo for everything your agent touched — including what no snaps
 
 ## Status
 
-Pre-alpha, not on npm yet. **Phase 0 is complete**: a transparent stdio MCP proxy, a hash-chained effect ledger, and a read-only CLI to inspect it. Today Sagaz *observes*: it does not classify (the `class` column below is empty except for annotated reads) and it does not undo anything — that is Phase 1 and 2. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
+Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and **Phase 1 is in progress**: every call is now classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Sagaz still only *observes*: no preview, no gates, no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
 
 ## Quickstart
 
@@ -41,18 +41,20 @@ sagaz status                     # sessions, ledger location, overall state
 sagaz verify                     # walk the hash chain of a session and report OK or the first break
 ```
 
-Real output from a Claude Code session, unedited:
+Real output, unedited (the toybox reel through Sagaz):
 
 ```
 $ sagaz ledger
-session 01M17V7N9X4J7KQ84GK07E5JF5  (2026-08-29 22:46:20Z, claude-code 2.1.0)
-seq  tool            server  class  status  duration  result  id
-───  ──────────────  ──────  ─────  ──────  ────────  ──────  ────────
-  1  list_accounts   toybox  read   ok           2ms    345B  EMX4HJV7
-  2  create_contact  toybox  -      ok           2ms    198B  YFAYMAT9
-  3  send_email      toybox  -      ok           1ms    250B  QKC1D5M5
-  4  transfer_funds  toybox  -      ok           1ms    240B  K39GJHH5
-  5  transfer_funds  toybox  -      error       11ms    130B  J0R67NJN
+session 01M17Y5KDNSXA0241H4C949P3N  (2026-08-29 23:37:38Z, reel 1.0.0)
+seq  tool            server  class    status  duration  result  id
+───  ──────────────  ──────  ───────  ──────  ────────  ──────  ────────
+  1  list_contacts   toybox  read     ok           3ms    610B  18R1VY1A
+  2  list_timeline   toybox  read     ok           1ms    191B  2JKEM6EZ
+  3  create_contact  toybox  R        ok           2ms    196B  2ST4J635
+  4  send_email      toybox  C        ok           1ms    234B  WTNJWEXW
+  5  transfer_funds  toybox  I        ok           1ms    222B  78HJNT9Q
+  6  delete_contact  toybox  unknown  ok           1ms    196B  QYT4KCFT
+6 effect(s)
 
 $ sagaz verify
 verify session 01M17V7N9X4J7KQ84GK07E5JF5
@@ -73,6 +75,14 @@ node packages/cli/dist/index.js --version
 ```
 
 Packages: [`@sagaz/core`](packages/core) (proxy + ledger), [`sagaz-mcp`](packages/cli) (the `sagaz` CLI), [`@sagaz/toybox`](packages/toybox).
+
+## How effects get their class
+
+`class` comes from a cascade — **your rules** in `sagaz.config.json` → MCP `readOnlyHint` → built-in name heuristics → `unknown` — and your rules always win. The heuristics are deliberately conservative: `create_*` is **R**, `send_*`/`post_*` are **C**, `transfer_*`/`pay_*`/`drop_*` are **I**, but `update_*`/`delete_*` stay `unknown` until a compensation pack or a rule of yours says otherwise, because **R means "Sagaz knows the inverse"** and a name never proves that. Table and rule format: [`packages/core/README.md`](packages/core/README.md).
+
+```json
+{ "servers": { "...": {} }, "rules": [ { "tool": "delete_contact", "server": "crm", "class": "R", "reason": "soft delete" } ] }
+```
 
 ## Running Sagaz in front of your MCP servers
 

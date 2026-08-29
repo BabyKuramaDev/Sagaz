@@ -2,7 +2,7 @@
 
 > **Undo para agentes de IA.** Un proxy MCP open source que registra cada efecto que tus agentes producen en el mundo, clasifica su reversibilidad antes de ejecutarlo, y te da preview, checkpoint, rollback y compensaciones. Git para las acciones de tus agentes.
 
-**Estado:** Spec v0.1 — pre-código
+**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), Fase 1 en curso (T7: clasificador). Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
 **Licencia:** MIT
 **Objetivo primario:** peso en la industria (revuelo, adopción, vocabulario propio), no revenue.
 **Acto 2 (futuro, fuera de scope):** el ledger como base de "Compliance Officer para sistemas de IA".
@@ -70,15 +70,19 @@ Los agentes ejecutan acciones sobre el mundo real (DBs, APIs, emails, archivos) 
 
 - **Interceptor**: server MCP hacia el cliente, cliente MCP hacia los servers downstream. Pass-through transparente: el agente no sabe que existe (cero tokens de overhead, no aparece en el schema de tools).
 - **Effect Ledger**: SQLite local (better-sqlite3). Tabla de efectos append-only con hash encadenado (tamper-evident barato). Es EL activo del proyecto — todo lo demás se construye arriba.
-- **Clasificador R/C/I**, en cascada de tres niveles:
-  1. **Anotaciones**: MCP ya define `readOnlyHint` / `destructiveHint` / `idempotentHint` en tool annotations — usarlas como primera señal.
-  2. **Reglas/heurísticas**: patterns por nombre y schema de tool (`delete_*`, `send_*`, `create_*`), configurables por el usuario en un `sagaz.config`.
-  3. **LLM** (opcional, para lo gris): clasificación con un modelo barato, cacheada por tool. Off por default (local-first, cero llamadas externas sin opt-in).
+- **Clasificador R/C/I**, en cascada de precedencia (primer match gana; implementado en T7, niveles 1–3):
+  1. **Reglas del usuario** en `sagaz.config.json` (`rules`: por tool exacto o glob, server opcional). SIEMPRE ganan: las anotaciones son declaraciones del server, no verdad revelada.
+  2. **Anotaciones MCP**: `readOnlyHint: true` → `read`. `destructiveHint` no es una clase (destructivo ≠ irreversible): actúa como tope, el resultado nunca puede ser R.
+  3. **Heurísticas built-in por nombre**, conservadoras (tabla en `packages/core/README.md`): `create_*` → R; `send_*|post_*|publish_*|notify_*` → C; `transfer_*|pay_*|charge_*|execute_*|drop_*` → I; `update_*|delete_*` → `unknown`.
+  4. `unknown` si nada matchea.
+  5. **LLM** (futuro, opcional, para lo gris): clasificación con un modelo barato, cacheada por tool. Off por default (local-first, cero llamadas externas sin opt-in).
+
+  **Principio rector (decisión T6/T7):** `R` significa "sabemos ejecutar la inversa" — y un nombre solo nunca prueba eso. `create_*` → R se sostiene (la inversa se deriva del resultado, sin pre-estado); `update_*`/`delete_*` por nombre → `unknown` hasta que exista capture hook / pack o regla del usuario. Ante la duda, `unknown`: un falso "reversible" es el peor error posible del sistema; un `unknown` es solo un aviso. La clasificación no es retroactiva (el hash sella la fila) y en Fase 1 solo anota — los gates son un ticket aparte.
 - **Compensation Engine**:
   - Tipo R: mapa declarativo `tool → inversa` (provisto por packs por dominio + config del usuario).
   - Tipo C: generación por LLM con contexto del efecto + resultado, SIEMPRE con aprobación humana antes de ejecutar. Una compensación mal generada es un segundo incidente.
 - **Policy/Gates**: reglas simples en config — `tipo I → bloquear | pedir confirmación`, `tool X → siempre preguntar`, umbrales. (Mínimo viable de "engarce" sin competir con los gateways.)
-- **CLI**: `sagaz init`, `sagaz ledger`, `sagaz checkpoint`, `sagaz rollback [--dry]`, `sagaz status`. Dashboard web queda para Fase 4.
+- **CLI**: hoy `sagaz serve`, `sagaz ledger`, `sagaz status`, `sagaz verify`; después `sagaz checkpoint`, `sagaz rollback [--dry]`. Dashboard web queda para Fase 4.
 
 **Decisiones técnicas:**
 
@@ -119,25 +123,37 @@ Formato habitual: tickets chicos, checkpoints explícitos, diffs-only review, me
 Leer el código de agentsgate a fondo. Documentado en `docs/T0-recon-y-schema.md`: qué hace, qué no hace, dónde nos diferenciamos, y el schema SQL del ledger v1 (tablas `sessions`, `checkpoints`, `effects`; `class`/`undo_json` quedan null en F0).
 ✓ Checkpoint: schema revisado y **congelado** antes de escribir el proxy.
 
-**T1 — Scaffold del proyecto**
+**T1 — Scaffold del proyecto** — **hecho**
 Repo público desde el día uno. pnpm + TS strict + Vitest + tsup. Estructura: `packages/core` (proxy + ledger), `packages/cli`. README con el pitch y un GIF placeholder. CI mínimo (build + test).
 ✓ Checkpoint: `npx` local levanta un "hello proxy" que no hace nada.
 
-**T2 — MCP server de juguete (`packages/toybox`)**
-Un server MCP propio con tools deliberadamente peligrosas que simulan **efectos externos** sobre un sandbox en memoria/SQLite con estado inspeccionable — no archivos: p.ej. `send_fake_email`, `create_crm_contact`, `post_fake_tweet`, `delete_crm_contact`, `drop_everything`. Base para e2e y para TODAS las demos/reels futuras; la demo insignia es compensar un envío.
+**T2 — MCP server de juguete (`packages/toybox`)** — **hecho**
+Un server MCP propio con tools deliberadamente peligrosas que simulan **efectos externos** sobre un sandbox SQLite con estado inspeccionable — no archivos. Implementado: CRM (`list/create/update/delete_contact`), comms (`send_email`, `list_inbox`, `post_tweet`, `delete_tweet`, `list_timeline`), banco (`list_accounts`, `transfer_funds`), con anotaciones MCP deliberadamente mezcladas; `drop_everything` diferido a Fase 2. Tabla en `packages/toybox/README.md`. Base para e2e y para TODAS las demos/reels futuras; la demo insignia es compensar un envío.
 ✓ Checkpoint: toybox corre standalone conectado a Claude Code.
 
-**T3 — Proxy pass-through stdio**
+**T3 — Proxy pass-through stdio** — **hecho**
 El interceptor: Sagaz se declara en el mcp config del cliente apuntando a N servers downstream (config `sagaz.config.json`). Forwarding transparente de `initialize`, `tools/list`, `tools/call`. Sin ledger todavía.
 ✓ Checkpoint: Claude Code usa toybox A TRAVÉS de Sagaz sin notar diferencia (e2e verde).
 
-**T4 — Effect ledger v1**
+**T4 — Effect ledger v1** — **hecho**
 Persistir cada `tools/call` + resultado en SQLite según schema de T0, con hash encadenado. Distinguir lecturas de mutaciones con la señal más burda disponible (annotations `readOnlyHint` si existe; si no, todo se registra).
 ✓ Checkpoint: correr una sesión de agente y ver N filas coherentes en la DB.
 
-**T5 — CLI de lectura**
+**T5 — CLI de lectura** — **hecho**
 `sagaz ledger` (tabla legible, filtros por sesión/tool), `sagaz status`. Nada de escritura todavía.
 ✓ Checkpoint: el GIF del README se graba con esto. **Fin de Fase 0 = primer contenido build-in-public (sin lanzamiento formal, "estoy construyendo esto").**
+
+**T6 — Auditoría de salida al mundo** — **hecho**
+El repo se hace público al final de Fase 1. Auditoría como dev escéptico (README, legibilidad, higiene, docs) → informe → aplicar solo lo aprobado. Decisión de nombre: marca Sagaz, CLI publicada como `sagaz-mcp` (bin `sagaz`), `@sagaz/core`, `@sagaz/toybox`.
+
+## 6b. Tickets — Fase 1
+
+**T7 — Clasificador R/C/I, niveles 1–3 (sin LLM)** — **en curso**
+Cascada reglas de usuario → anotaciones → heurísticas → `unknown` (§4). Solo anota, no frena.
+✓ Checkpoint: reel del toybox con la columna `class` viva; tests de la cascada y de usuario-sobre-anotación.
+
+**T8 — Gates por política** *(siguiente)*: `tipo I → confirmar | bloquear`, `tool X → siempre preguntar`; `status = 'blocked'` en el ledger.
+**T9 — Preview**: reportar el efecto sin reenviar (`status = 'dry'`).
 
 ## 7. Distribución (es parte del producto, no un anexo)
 
