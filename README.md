@@ -21,7 +21,10 @@ pnpm install
 pnpm build
 pnpm test
 node packages/cli/dist/index.js --version
+node packages/toybox/dist/index.js seed && node packages/toybox/dist/index.js inspect
 ```
+
+The repo ships a `.mcp.json` that registers the toybox server, so Claude Code opened in this directory can drive the simulated world directly (see `packages/toybox/README.md`).
 
 ## License
 
