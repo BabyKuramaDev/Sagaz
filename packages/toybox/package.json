@@ -1,0 +1,27 @@
+{
+  "name": "@sagaz/toybox",
+  "version": "0.0.0",
+  "description": "Sagaz toybox — a deliberately dangerous MCP server simulating an external world (CRM, email, tweets, bank)",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "sagaz-toybox": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^12.11.1",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
+  }
+}
