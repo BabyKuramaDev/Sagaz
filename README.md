@@ -10,7 +10,39 @@ One undo for everything your agent touched — including what no snapshot can re
 
 ## Status
 
-Pre-alpha. Phase 0 (pass-through proxy + persistent ledger + read-only CLI) is under construction. See [`SPEC.md`](SPEC.md) for the vision, architecture, and roadmap.
+Pre-alpha. **Phase 0 is complete**: a transparent stdio MCP proxy, a hash-chained effect ledger, and a read-only CLI to inspect it. No classification or rollback yet — that is Phase 1 and 2. See [`SPEC.md`](SPEC.md) for the vision, architecture, and roadmap.
+
+## Reading the ledger
+
+```sh
+sagaz ledger                     # effects of the last session: seq, tool, server, class, status, duration, result size
+sagaz ledger --tool send_email   # filters: --session <id|last>, --tool <name>, --status <ok|error|pending|…>
+sagaz ledger --json              # one raw row per line (NDJSON)
+sagaz status                     # sessions, ledger location, overall state
+sagaz verify                     # walk the hash chain of a session and report OK or the first break
+```
+
+```
+$ sagaz ledger
+session 01M17V7N9X4J7KQ84GK07E5JF5  (2026-08-29 22:46:20Z, claude-code 2.1.0)
+seq  tool            server  class  status  duration  result  id
+───  ──────────────  ──────  ─────  ──────  ────────  ──────  ────────
+  1  list_accounts   toybox  read   ok           2ms    345B  EMX4HJV7
+  2  create_contact  toybox  -      ok           2ms    198B  YFAYMAT9
+  3  send_email      toybox  -      ok           1ms    250B  QKC1D5M5
+  4  transfer_funds  toybox  -      ok           1ms    240B  K39GJHH5
+  5  transfer_funds  toybox  -      error       11ms    130B  J0R67NJN
+
+$ sagaz verify
+verify session 01M17V7N9X4J7KQ84GK07E5JF5
+  genesis  2a738bbbf595f48623169551599214e803eb1c601c210fca7ee5d51f6f9502cf
+  ✓ seq   1  list_accounts   2a738bbbf595 → 7a0c17c6c46f
+  ✓ seq   2  create_contact  7a0c17c6c46f → be9093fa7542
+  …
+OK 5 effect(s) chained
+```
+
+Colour is used only on a TTY and honours [`NO_COLOR`](https://no-color.org).
 
 ## Development
 

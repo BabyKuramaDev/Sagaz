@@ -7,7 +7,7 @@
  *   end()    → UPDATE result_json / ts_end / status, then compute the hash and chain it.
  * Rows that stay 'pending' forever are the honest trace of a crash and are never cleaned up.
  */
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { effectHash, genesisHash, sha256Hex, type HashableEffect } from "./hash.js";
@@ -46,6 +46,23 @@ export interface SessionRow {
 export interface LedgerOptions {
   maxResultBytes?: number;
   clock?: () => string;
+  /** Open for reading only: never creates the file or the schema. Throws if the file is missing. */
+  readonly?: boolean;
+}
+
+export interface EffectFilter {
+  tool?: string | undefined;
+  status?: EffectStatus | undefined;
+}
+
+export interface SessionSummary extends SessionRow {
+  effects: number;
+  pending: number;
+  last_ts: string | null;
+}
+
+export class LedgerNotFoundError extends Error {
+  override readonly name = "LedgerNotFoundError";
 }
 
 export interface BeginEffectInput {
@@ -105,11 +122,17 @@ export class Ledger {
   private readonly tails = new Map<string, string>();
 
   constructor(path: string, opts: LedgerOptions = {}) {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    this.db.pragma("journal_mode = WAL");
+    if (opts.readonly) {
+      if (!existsSync(path)) throw new LedgerNotFoundError(`No ledger at ${path} — run \`sagaz serve\` first`);
+      // Never writes rows. SQLite may still create the -wal/-shm sidecars a WAL reader needs.
+      this.db = new Database(path, { readonly: true });
+    } else {
+      if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+      this.db = new Database(path);
+      this.db.pragma("journal_mode = WAL");
+      this.db.exec(SCHEMA_V1);
+    }
     this.db.pragma("foreign_keys = ON");
-    this.db.exec(SCHEMA_V1);
     this.now = opts.clock ?? (() => new Date().toISOString());
     this.maxResultBytes = opts.maxResultBytes ?? DEFAULT_MAX_RESULT_BYTES;
   }
@@ -142,6 +165,30 @@ export class Ledger {
 
   listSessions(): SessionRow[] {
     return this.db.prepare("SELECT * FROM sessions ORDER BY id").all() as SessionRow[];
+  }
+
+  /** Most recent session (ULIDs sort by creation time). */
+  lastSession(): SessionRow | undefined {
+    return this.db.prepare("SELECT * FROM sessions ORDER BY id DESC LIMIT 1").get() as SessionRow | undefined;
+  }
+
+  /** Sessions whose id equals `ref` or starts with it (exact match wins). Plain prefix, no wildcards. */
+  findSessions(ref: string): SessionRow[] {
+    const exact = this.getSession(ref);
+    if (exact) return [exact];
+    return this.db.prepare("SELECT * FROM sessions WHERE substr(id, 1, length(?)) = ? ORDER BY id").all(ref, ref) as SessionRow[];
+  }
+
+  listSessionSummaries(): SessionSummary[] {
+    return this.db
+      .prepare(
+        `SELECT s.*, COUNT(e.id) AS effects,
+                SUM(CASE WHEN e.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                MAX(COALESCE(e.ts_end, e.ts_start)) AS last_ts
+         FROM sessions s LEFT JOIN effects e ON e.session_id = s.id
+         GROUP BY s.id ORDER BY s.id`,
+      )
+      .all() as SessionSummary[];
   }
 
   // ---- effects ---------------------------------------------------------------
@@ -193,8 +240,18 @@ export class Ledger {
     return this.db.prepare("SELECT * FROM effects WHERE id = ?").get(id) as EffectRow | undefined;
   }
 
-  listEffects(sessionId: string): EffectRow[] {
-    return this.db.prepare("SELECT * FROM effects WHERE session_id = ? ORDER BY seq").all(sessionId) as EffectRow[];
+  listEffects(sessionId: string, filter: EffectFilter = {}): EffectRow[] {
+    const where = ["session_id = ?"];
+    const params: unknown[] = [sessionId];
+    if (filter.tool !== undefined) {
+      where.push("tool = ?");
+      params.push(filter.tool);
+    }
+    if (filter.status !== undefined) {
+      where.push("status = ?");
+      params.push(filter.status);
+    }
+    return this.db.prepare(`SELECT * FROM effects WHERE ${where.join(" AND ")} ORDER BY seq`).all(...params) as EffectRow[];
   }
 
   /** Current chain tail of a session. Only sessions opened by this instance can be appended to. */
