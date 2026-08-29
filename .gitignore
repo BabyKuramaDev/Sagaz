@@ -12,6 +12,8 @@ coverage/
 *.sqlite
 *.sqlite-journal
 *.db
+*.db-wal
+*.db-shm
 
 # editors / OS
 .DS_Store
