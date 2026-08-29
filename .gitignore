@@ -24,3 +24,6 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# effect ledger (default location)
+.sagaz/

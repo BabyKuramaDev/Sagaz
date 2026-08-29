@@ -1,7 +1,7 @@
 /**
  * The Sagaz interceptor: an MCP server towards the client, an MCP client towards each
- * downstream server. Phase 0 / T3: transparent pass-through of tools/list and tools/call.
- * No ledger yet.
+ * downstream server. Phase 0: transparent pass-through of tools/list and tools/call, with
+ * every call recorded in the effect ledger.
  *
  * Tool naming is passthrough by design: names are stable regardless of how many servers are
  * configured. A collision between two downstream servers is a startup error that points the
@@ -21,6 +21,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { PREFIX_SEPARATOR, type SagazConfig, type ServerConfig } from "./config.js";
+import { configHash, type Ledger } from "./ledger/index.js";
 
 export const PROXY_NAME = "sagaz";
 
@@ -47,6 +48,8 @@ export interface ProxyOptions {
   log?: (line: string) => void;
   /** Injectable for tests: build a transport for a downstream server instead of spawning it. */
   connect?: (name: string, config: ServerConfig) => Transport;
+  /** Effect ledger. Always on in the CLI; optional here so routing can be tested alone. */
+  ledger?: Ledger;
 }
 
 export function exposedName(server: ServerConfig, downstreamName: string): string {
@@ -92,6 +95,8 @@ export class SagazProxy {
   private routes = new Map<string, Route>();
   private readonly log: (line: string) => void;
   private readonly connectTransport: (name: string, config: ServerConfig) => Transport;
+  private readonly ledger: Ledger | undefined;
+  private sessionId: string | undefined;
 
   constructor(
     private readonly config: SagazConfig,
@@ -100,6 +105,12 @@ export class SagazProxy {
     this.version = opts.version ?? "0.0.0";
     this.log = opts.log ?? ((line) => process.stderr.write(`${line}\n`));
     this.connectTransport = opts.connect ?? ((_name, cfg) => spawnTransport(cfg));
+    this.ledger = opts.ledger;
+  }
+
+  /** Ledger session opened by the client's `initialize`, if any. */
+  get currentSessionId(): string | undefined {
+    return this.sessionId;
   }
 
   /**
@@ -128,6 +139,8 @@ export class SagazProxy {
     );
     this.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [...this.routes.values()].map((r) => r.tool) }));
     this.server.setRequestHandler(CallToolRequestSchema, (req) => this.callTool(req.params.name, req.params.arguments ?? {}));
+    // One ledger session per client `initialize`, with the client's identity captured.
+    this.server.oninitialized = () => this.openSession("initialize");
     this.log(`sagaz: proxying ${this.routes.size} tool(s) from ${this.downstreams.map((d) => d.name).join(", ")}`);
   }
 
@@ -164,12 +177,61 @@ export class SagazProxy {
     }
   }
 
+  private openSession(trigger: string): void {
+    if (!this.ledger) return;
+    const session = this.ledger.openSession({ clientInfo: this.server?.getClientVersion(), configHash: configHash(this.config) });
+    this.sessionId = session.id;
+    this.log(`sagaz: ledger session ${session.id} opened (${trigger})`);
+  }
+
+  /**
+   * Ledger write policy: a failure to record never changes what the client sees. The call
+   * already happened (or failed) downstream; we log loudly and return the real outcome.
+   */
+  private record(effectId: string | undefined, input: { status: "ok" | "error"; result: unknown }): void {
+    if (effectId === undefined || !this.ledger) return;
+    try {
+      this.ledger.end(effectId, input);
+    } catch (err) {
+      this.log(`sagaz: LEDGER WRITE FAILED for effect ${effectId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     const route = this.routes.get(name);
     if (!route) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
     const downstream = this.downstreams.find((d) => d.name === route.server);
     if (!downstream) throw new McpError(ErrorCode.InternalError, `No connection to server "${route.server}"`);
-    return (await downstream.client.callTool({ name: route.downstreamName, arguments: args })) as CallToolResult;
+
+    // A compliant client sends notifications/initialized before any call; if one doesn't,
+    // record anyway rather than silently skipping ("everything is recorded").
+    if (this.ledger && !this.sessionId) this.openSession("first tools/call before initialized");
+
+    // Phase 0 classification: the crudest signal only — readOnlyHint → 'read'. Everything else NULL.
+    const effectId =
+      this.ledger && this.sessionId
+        ? this.ledger.begin({
+            sessionId: this.sessionId,
+            server: route.server,
+            tool: route.downstreamName,
+            args,
+            classification:
+              route.tool.annotations?.readOnlyHint === true
+                ? { class: "read", source: "annotation", reason: "readOnlyHint: true" }
+                : undefined,
+          })
+        : undefined;
+
+    let result: CallToolResult;
+    try {
+      result = (await downstream.client.callTool({ name: route.downstreamName, arguments: args })) as CallToolResult;
+    } catch (err) {
+      // Protocol-level failure (transport, invalid params...): recorded, then re-thrown to the client.
+      this.record(effectId, { status: "error", result: { error: err instanceof Error ? err.message : String(err) } });
+      throw err;
+    }
+    this.record(effectId, { status: result.isError ? "error" : "ok", result });
+    return result;
   }
 }
 

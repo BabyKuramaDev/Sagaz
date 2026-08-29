@@ -1,5 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CORE_VERSION, ConfigError, DEFAULT_CONFIG_PATH, SagazProxy, ToolCollisionError, loadConfig } from "@sagaz/core";
+import { CORE_VERSION, ConfigError, DEFAULT_CONFIG_PATH, Ledger, SagazProxy, ToolCollisionError, loadConfig } from "@sagaz/core";
 import { CLI_VERSION } from "./version.js";
 
 const USAGE = `sagaz — effect ledger and undo for AI agents
@@ -60,17 +60,23 @@ async function main(argv: readonly string[]): Promise<number> {
     case "serve": {
       // stdout is the MCP channel from here on: anything human goes to stderr.
       const config = await loadConfig(parsed.config);
-      const proxy = new SagazProxy(config, { version: CLI_VERSION });
+      const ledger = new Ledger(config.ledger.path, { maxResultBytes: config.ledger.maxResultBytes });
+      process.stderr.write(`sagaz: ledger at ${config.ledger.path}\n`);
+      const proxy = new SagazProxy(config, { version: CLI_VERSION, ledger });
       try {
         await proxy.start();
       } catch (err) {
         // Downstream processes may already be running: release them or the event loop never drains.
         await proxy.close();
+        ledger.close();
         throw err;
       }
       await proxy.serve(new StdioServerTransport());
       const shutdown = () => {
-        void proxy.close().finally(() => process.exit(0));
+        void proxy.close().finally(() => {
+          ledger.close();
+          process.exit(0);
+        });
       };
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
