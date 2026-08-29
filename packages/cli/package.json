@@ -1,0 +1,22 @@
+{
+  "name": "sagaz",
+  "version": "0.0.0",
+  "description": "Sagaz CLI — effect ledger and undo for AI agents",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "sagaz": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@sagaz/core": "workspace:*"
+  }
+}
