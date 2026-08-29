@@ -36,6 +36,8 @@ The classifier reduces the tool name to its first word (`gmail.sendEmail` → `s
 | `update` `delete` `remove` `set` `patch` `put` `run` | `unknown` | a mutation whose inverse needs the previous state — by name alone, nobody knows it |
 | anything else | `unknown` | no signal |
 
+A read verb up front does not make the whole name a read: `get_or_create_user`, `search_and_destroy`, `list_and_delete` → `unknown` (the name also contains a mutating verb).
+
 `update_*` / `delete_*` will become `R` only when a compensation pack with a capture hook exists for that tool (Phase 2), or when you say so with a rule.
 
 Source: `src/classifier/heuristics.ts`. Keep this table and that file in sync.

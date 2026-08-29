@@ -1,7 +1,7 @@
 /**
  * @sagaz/core — MCP proxy + effect ledger.
  *
- * Transparent pass-through proxy + R/C/I classifier (levels 1–2) + effect ledger v1.
+ * Transparent pass-through proxy + R/C/I classifier (levels 1–3) + effect ledger v1.
  */
 
 import { createRequire } from "node:module";

@@ -1,5 +1,5 @@
 /**
- * R/C/I classifier, levels 1 and 2 (no LLM). Runs once per tools/call, before the call is
+ * R/C/I classifier, levels 1–3 (no LLM). Runs once per tools/call, before the call is
  * forwarded; the result is written into the effect row and sealed into its hash.
  *
  * Precedence (first hit wins):

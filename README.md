@@ -57,12 +57,12 @@ seq  tool            server  class    status  duration  result  id
 6 effect(s)
 
 $ sagaz verify
-verify session 01M17V7N9X4J7KQ84GK07E5JF5
-  genesis  2a738bbbf595f48623169551599214e803eb1c601c210fca7ee5d51f6f9502cf
-  ✓ seq   1  list_accounts   2a738bbbf595 → 7a0c17c6c46f
-  ✓ seq   2  create_contact  7a0c17c6c46f → be9093fa7542
+verify session 01M17Y5KDNSXA0241H4C949P3N
+  genesis  12beb1d45575d6c62292fc23d1917ea00b82c3dd8485f26a1beba0c51cfd480e
+  ✓ seq   1  list_contacts   12beb1d45575 → c219757aece0
+  ✓ seq   2  list_timeline   c219757aece0 → 1d4094a030ee
   …
-OK 5 effect(s) chained
+OK 6 effect(s) chained
 ```
 
 Colour is used only on a TTY and honours [`NO_COLOR`](https://no-color.org).

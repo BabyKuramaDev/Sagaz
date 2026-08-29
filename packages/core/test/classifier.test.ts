@@ -30,6 +30,12 @@ describe("built-in heuristics", () => {
   it("never yields R for anything but create_*", () => {
     for (const row of HEURISTICS) if (row.class === "R") expect(row.verbs).toEqual(["create"]);
   });
+  it("compound names that start with a read verb but contain a mutating one → unknown", () => {
+    expect(matchHeuristic("get_or_create_user")).toMatchObject({ class: "unknown", reason: expect.stringContaining("create") });
+    expect(matchHeuristic("search_and_destroy")?.class).toBe("unknown");
+    expect(matchHeuristic("listAndDelete")?.class).toBe("unknown");
+    expect(matchHeuristic("get_sent_items")?.class).toBe("read"); // "sent" is not a verb in the table
+  });
   it("returns undefined for an unrecognised verb", () => {
     expect(matchHeuristic("frobnicate_widget")).toBeUndefined();
   });

@@ -37,6 +37,20 @@ export const HEURISTICS: ReadonlyArray<{ verbs: readonly string[]; class: Effect
   },
 ];
 
+/** Every verb the table treats as a mutation (anything that is not `read`). */
+const MUTATING_VERBS = new Set(HEURISTICS.filter((r) => r.class !== "read").flatMap((r) => r.verbs));
+
+/**
+ * Tokens of a tool name: last namespace segment (after `.`, `/`, `:` or `__`), camelCase split
+ * into words, lowercased. `gmail.sendEmail` → ["send","email"], `toybox__list_contacts` → ["list","contacts"].
+ */
+export function nameTokens(toolName: string): string[] {
+  const segments = toolName.split(/__|[./:]/);
+  const last = segments[segments.length - 1] ?? toolName;
+  const snake = last.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  return snake.split(/[_\-\s]+/).filter((t) => t.length > 0);
+}
+
 /**
  * Reduces a tool name to the verb the heuristics key on:
  *   `gmail.sendEmail` → `send`, `toybox__list_contacts` → `list`, `DropTable` → `drop`.
@@ -44,10 +58,7 @@ export const HEURISTICS: ReadonlyArray<{ verbs: readonly string[]; class: Effect
  * snake_case, lowercases, and keeps the first `_`-separated token.
  */
 export function leadingVerb(toolName: string): string {
-  const segments = toolName.split(/__|[./:]/);
-  const last = segments[segments.length - 1] ?? toolName;
-  const snake = last.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-  return snake.split(/[_\-\s]+/).find((t) => t.length > 0) ?? snake;
+  return nameTokens(toolName)[0] ?? "";
 }
 
 export interface HeuristicMatch {
@@ -57,9 +68,15 @@ export interface HeuristicMatch {
 
 /** `undefined` when no verb matches — the caller falls through to `unknown`. */
 export function matchHeuristic(toolName: string): HeuristicMatch | undefined {
-  const verb = leadingVerb(toolName);
-  for (const row of HEURISTICS) {
-    if (row.verbs.includes(verb)) return { class: row.class, reason: `built-in heuristic ${verb}_* → ${row.class}: ${row.why}` };
+  const tokens = nameTokens(toolName);
+  const verb = tokens[0] ?? "";
+  const row = HEURISTICS.find((r) => r.verbs.includes(verb));
+  if (!row) return undefined;
+  // A read verb up front does not make the whole name a read: `get_or_create_user`,
+  // `search_and_destroy`, `list_and_delete`. Any mutating verb later in the name → unknown.
+  if (row.class === "read") {
+    const mutating = tokens.slice(1).find((t) => MUTATING_VERBS.has(t));
+    if (mutating) return { class: "unknown", reason: `compound name: starts with ${verb}_* but contains ${mutating}; a name alone never proves reversibility` };
   }
-  return undefined;
+  return { class: row.class, reason: `built-in heuristic ${verb}_* → ${row.class}: ${row.why}` };
 }
