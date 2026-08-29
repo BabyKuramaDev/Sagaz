@@ -2,7 +2,7 @@
 
 > **Undo para agentes de IA.** Un proxy MCP open source que registra cada efecto que tus agentes producen en el mundo, clasifica su reversibilidad antes de ejecutarlo, y te da preview, checkpoint, rollback y compensaciones. Git para las acciones de tus agentes.
 
-**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), Fase 1 en curso (T7: clasificador). Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
+**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), Fase 1 en curso (T7 clasificador hecho; siguiente T8 gates). Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
 **Licencia:** MIT
 **Objetivo primario:** peso en la industria (revuelo, adopción, vocabulario propio), no revenue.
 **Acto 2 (futuro, fuera de scope):** el ledger como base de "Compliance Officer para sistemas de IA".
@@ -148,7 +148,7 @@ El repo se hace público al final de Fase 1. Auditoría como dev escéptico (REA
 
 ## 6b. Tickets — Fase 1
 
-**T7 — Clasificador R/C/I, niveles 1–3 (sin LLM)** — **en curso**
+**T7 — Clasificador R/C/I, niveles 1–3 (sin LLM)** — **hecho** (`destructiveHint` = tope, nunca eleva; política oficial)
 Cascada reglas de usuario → anotaciones → heurísticas → `unknown` (§4). Solo anota, no frena.
 ✓ Checkpoint: reel del toybox con la columna `class` viva; tests de la cascada y de usuario-sobre-anotación.
 
