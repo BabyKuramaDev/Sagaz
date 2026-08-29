@@ -136,5 +136,5 @@ Formato canónico exacto (claves, orden, escapes, `genesis_hash`): documentado e
 - [x] Código de agentsgate leído (proxy, store, checkpoint, shadow, rollback, adapters, intelligence)
 - [x] Diferenciación documentada y verificable (tabla §2)
 - [x] Schema v1 diseñado con decisiones justificadas
-- [ ] **Validación de Jero** → congelar schema
-- [ ] Nombre: verificar disponibilidad npm + dominio antes de T1
+- [x] **Validación de Jero** → schema congelado (T4, 29-08-2026; ver §4b y `packages/core/src/ledger/schema.ts`)
+- [x] Nombre: `sagaz` en npm está tomado (paquete ajeno, 2018–2022). Decisión (T6, 29-08-2026): la marca sigue siendo **Sagaz**; la CLI se publica como **`sagaz-mcp`** (libre, verificado) con bin `sagaz`; core y toybox como `@sagaz/core` y `@sagaz/toybox`. Nada se publica hasta el lanzamiento de Fase 1.
