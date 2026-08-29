@@ -4,7 +4,10 @@
  * Phase 0: transparent pass-through proxy + effect ledger v1.
  */
 
-export const CORE_VERSION = "0.0.0";
+import { createRequire } from "node:module";
+
+/** Package version, read from package.json at runtime (single source of truth, same as the CLI). */
+export const CORE_VERSION: string = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
 export {
   ConfigError,

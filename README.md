@@ -2,15 +2,34 @@
 
 > **Your agents can act. Can they undo?**
 
-Sagaz is an open source MCP proxy that records every effect your agents produce in the world (the *effect ledger*), classifies each one by reversibility (**R**eversible / **C**ompensable / **I**rreversible), and gives you preview, checkpoint, rollback by compensation, and a kill switch.
+Sagaz is an open source MCP proxy that records every effect your agents produce in the world — the *effect ledger*. It is being built to classify each effect by reversibility (**R**eversible / **C**ompensable / **I**rreversible) before it happens, and to give you preview, checkpoint, rollback by compensation, and a kill switch on top of that record.
 
-One undo for everything your agent touched — including what no snapshot can reach.
-
-![Sagaz demo — coming soon](docs/demo.gif)
+The goal: one undo for everything your agent touched — including what no snapshot can reach.
 
 ## Status
 
-Pre-alpha. **Phase 0 is complete**: a transparent stdio MCP proxy, a hash-chained effect ledger, and a read-only CLI to inspect it. No classification or rollback yet — that is Phase 1 and 2. See [`SPEC.md`](SPEC.md) for the vision, architecture, and roadmap.
+Pre-alpha, not on npm yet. **Phase 0 is complete**: a transparent stdio MCP proxy, a hash-chained effect ledger, and a read-only CLI to inspect it. Today Sagaz *observes*: it does not classify (the `class` column below is empty except for annotated reads) and it does not undo anything — that is Phase 1 and 2. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
+
+## Quickstart
+
+From clone to a populated ledger, with the bundled [toybox](packages/toybox/README.md) — a deliberately dangerous MCP server simulating a CRM, email, tweets and a bank — as the downstream server. Requires Node ≥ 20 and pnpm (`corepack enable` picks the pinned version up).
+
+```sh
+git clone https://github.com/BabyKuramaDev/Sagaz.git && cd Sagaz
+pnpm install && pnpm build
+node packages/toybox/dist/index.js seed        # deterministic sample world in ./toybox.db
+claude                                          # Claude Code: the repo's .mcp.json routes toybox through Sagaz
+```
+
+Ask the agent for anything — *"list the CRM contacts and send Ada a welcome email"* — then:
+
+```sh
+node packages/cli/dist/index.js ledger          # every tools/call that crossed the proxy
+node packages/cli/dist/index.js verify          # walk the hash chain
+node packages/toybox/dist/index.js inspect      # what the world looks like now
+```
+
+To have `sagaz` on your PATH while developing: `pnpm --filter sagaz-mcp link --global`. When published, the CLI will be `npx sagaz-mcp` (the bare `sagaz` name on npm is an unrelated package).
 
 ## Reading the ledger
 
@@ -21,6 +40,8 @@ sagaz ledger --json              # one raw row per line (NDJSON)
 sagaz status                     # sessions, ledger location, overall state
 sagaz verify                     # walk the hash chain of a session and report OK or the first break
 ```
+
+Real output from a Claude Code session, unedited:
 
 ```
 $ sagaz ledger
@@ -46,15 +67,12 @@ Colour is used only on a TTY and honours [`NO_COLOR`](https://no-color.org).
 
 ## Development
 
-Requires Node ≥ 20 and pnpm (the exact version is pinned in `package.json` → `packageManager`; `corepack enable` picks it up).
-
 ```sh
-pnpm install
-pnpm build
-pnpm test
+pnpm install && pnpm build && pnpm test
 node packages/cli/dist/index.js --version
-node packages/toybox/dist/index.js seed && node packages/toybox/dist/index.js inspect
 ```
+
+Packages: [`@sagaz/core`](packages/core) (proxy + ledger), [`sagaz-mcp`](packages/cli) (the `sagaz` CLI), [`@sagaz/toybox`](packages/toybox).
 
 ## Running Sagaz in front of your MCP servers
 
@@ -68,6 +86,8 @@ Sagaz is an MCP proxy: your client talks to `sagaz serve`, Sagaz talks to your s
 ```json
 { "mcpServers": { "sagaz": { "command": "node", "args": ["packages/cli/dist/index.js", "serve", "--config", "sagaz.config.json"] } } }
 ```
+
+Paths: `ledger.path` and each server's `cwd` are resolved relative to the config file; `command`/`args` are passed to the child process as written, so relative paths in them are relative to wherever Sagaz is started (the example above assumes the repo root).
 
 Every `tools/call` that crosses Sagaz is recorded in the **effect ledger**, a local SQLite file (`ledger.path`, default `./.sagaz/ledger.db`, relative to the config file). Each session (one per client `initialize`) has its own hash chain; every closed effect is `sha256(prev_hash || canonical_fields)`, so the ledger is tamper-evident. Large results are truncated to `ledger.maxResultBytes` (default 64 KB) and marked as such. The ledger holds tool arguments and results verbatim — it may contain secrets; it never leaves your machine.
 

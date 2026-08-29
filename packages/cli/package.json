@@ -1,13 +1,31 @@
 {
-  "name": "sagaz",
+  "name": "sagaz-mcp",
   "version": "0.0.0",
   "description": "Sagaz CLI — effect ledger and undo for AI agents",
   "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BabyKuramaDev/Sagaz.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/BabyKuramaDev/Sagaz#readme",
+  "bugs": "https://github.com/BabyKuramaDev/Sagaz/issues",
+  "keywords": [
+    "mcp",
+    "proxy",
+    "agents",
+    "undo",
+    "effect-ledger",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "sagaz": "./dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20"
   },
