@@ -36,8 +36,8 @@ seq  tool            server  class  status  duration  result  id
 $ sagaz verify
 verify session 01M17V7N9X4J7KQ84GK07E5JF5
   genesis  2a738bbbf595f48623169551599214e803eb1c601c210fca7ee5d51f6f9502cf
-  ✓ seq   1  list_accounts      2a738bbbf595 → 7a0c17c6c46f
-  ✓ seq   2  create_contact     7a0c17c6c46f → be9093fa7542
+  ✓ seq   1  list_accounts   2a738bbbf595 → 7a0c17c6c46f
+  ✓ seq   2  create_contact  7a0c17c6c46f → be9093fa7542
   …
 OK 5 effect(s) chained
 ```
