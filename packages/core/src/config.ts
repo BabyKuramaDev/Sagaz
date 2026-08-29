@@ -7,6 +7,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
+import { DEFAULT_LEDGER_PATH, DEFAULT_MAX_RESULT_BYTES } from "./ledger/ledger.js";
 
 export const DEFAULT_CONFIG_PATH = "./sagaz.config.json";
 
@@ -25,11 +26,20 @@ const ServerConfigSchema = z.object({
   prefix: z.string().regex(IDENT, "prefix must match [A-Za-z0-9_-]+").optional(),
 });
 
+const LedgerConfigSchema = z.object({
+  /** SQLite file for the effect ledger; relative to the config file. Directory is created. */
+  path: z.string().min(1).default(DEFAULT_LEDGER_PATH),
+  /** result_json larger than this is truncated (marked, see ledger/ledger.ts). */
+  maxResultBytes: z.number().int().positive().default(DEFAULT_MAX_RESULT_BYTES),
+});
+
 const ConfigSchema = z.object({
   servers: z.record(z.string().regex(IDENT, "server name must match [A-Za-z0-9_-]+"), ServerConfigSchema),
+  ledger: LedgerConfigSchema.default({ path: DEFAULT_LEDGER_PATH, maxResultBytes: DEFAULT_MAX_RESULT_BYTES }),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
+export type LedgerConfig = z.infer<typeof LedgerConfigSchema>;
 export type SagazConfig = z.infer<typeof ConfigSchema>;
 
 export class ConfigError extends Error {
@@ -68,5 +78,6 @@ export async function loadConfig(path = DEFAULT_CONFIG_PATH): Promise<SagazConfi
   for (const server of Object.values(config.servers)) {
     if (server.cwd !== undefined) server.cwd = resolve(base, server.cwd);
   }
+  config.ledger.path = resolve(base, config.ledger.path);
   return config;
 }

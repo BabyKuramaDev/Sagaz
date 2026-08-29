@@ -9,7 +9,11 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SagazProxy, ToolCollisionError, buildRoutes } from "../src/proxy.js";
-import type { SagazConfig } from "../src/config.js";
+import { parseConfig, type SagazConfig, type ServerConfig } from "../src/config.js";
+import { Ledger } from "../src/ledger/index.js";
+
+/** Build a config the way loadConfig would (defaults applied). */
+const cfgOf = (servers: Record<string, ServerConfig>): SagazConfig => parseConfig({ servers });
 
 const TOYBOX_BIN = fileURLToPath(new URL("../../toybox/dist/index.js", import.meta.url));
 if (!existsSync(TOYBOX_BIN)) throw new Error(`toybox not built (${TOYBOX_BIN}). Run \`pnpm build\` before \`pnpm test\`.`);
@@ -40,7 +44,7 @@ async function connectClient(proxy: SagazProxy): Promise<Client> {
 const text = (r: CallToolResult) => (r.content[0]?.type === "text" ? r.content[0].text : "");
 
 describe("buildRoutes", () => {
-  const cfg: SagazConfig = { servers: { a: { command: "x" }, b: { command: "y" } } };
+  const cfg = cfgOf({ a: { command: "x" }, b: { command: "y" } });
   const tool = (name: string) => ({ name, inputSchema: { type: "object" as const } });
 
   it("passes names through unchanged, regardless of server count", () => {
@@ -54,7 +58,7 @@ describe("buildRoutes", () => {
     );
   });
   it("applies an explicit prefix only to the server that declares it", () => {
-    const withPrefix: SagazConfig = { servers: { a: { command: "x" }, b: { command: "y", prefix: "bee" } } };
+    const withPrefix = cfgOf({ a: { command: "x" }, b: { command: "y", prefix: "bee" } });
     const routes = buildRoutes(withPrefix, new Map([["a", [tool("send_email")]], ["b", [tool("send_email")]]]));
     expect([...routes.keys()]).toEqual(["send_email", "bee__send_email"]);
   });
@@ -63,7 +67,7 @@ describe("buildRoutes", () => {
 describe("SagazProxy over a real toybox (stdio downstream)", () => {
   it("runs the reel through Sagaz: seed → create_contact → send_email → transfer_funds", async () => {
     const db = join(dir, "world.db");
-    const proxy = new SagazProxy({ servers: { toybox: toybox(db) } }, { log: () => {} });
+    const proxy = new SagazProxy(cfgOf({ toybox: toybox(db) }), { log: () => {} });
     await proxy.start();
     const client = await connectClient(proxy);
     try {
@@ -95,12 +99,54 @@ describe("SagazProxy over a real toybox (stdio downstream)", () => {
     }
   });
 
+  it("records every call in the ledger: session per initialize, read via readOnlyHint, chained hashes", async () => {
+    const db = join(dir, "world.db");
+    toyboxCli(db, "seed");
+    const ledger = new Ledger(join(dir, "ledger.db"));
+    const proxy = new SagazProxy(cfgOf({ toybox: toybox(db) }), { log: () => {}, ledger });
+    await proxy.start();
+    expect(proxy.currentSessionId).toBeUndefined();
+    const client = await connectClient(proxy);
+    try {
+      const sessionId = proxy.currentSessionId;
+      expect(sessionId).toBeDefined();
+      const session = ledger.getSession(sessionId as string);
+      expect(JSON.parse(session?.client_info ?? "null")).toMatchObject({ name: "test-client" });
+
+      await client.callTool({ name: "list_contacts", arguments: {} });
+      await client.callTool({ name: "create_contact", arguments: { name: "Alan Turing", email: "alan@bletchley.uk" } });
+      await client.callTool({ name: "transfer_funds", arguments: { from_account: "acc-vendor", to_account: "acc-ops", amount_cents: 999_999_999 } });
+
+      const rows = ledger.listEffects(sessionId as string);
+      expect(rows.map((r) => [r.seq, r.tool, r.class, r.class_source, r.status])).toEqual([
+        [1, "list_contacts", "read", "annotation", "ok"],
+        [2, "create_contact", null, null, "ok"],
+        [3, "transfer_funds", null, null, "error"],
+      ]);
+      expect(JSON.parse(rows[1]?.args_json ?? "")).toEqual({ name: "Alan Turing", email: "alan@bletchley.uk" });
+      expect(rows[0]?.prev_hash).toBe(session?.genesis_hash);
+      expect(rows[1]?.prev_hash).toBe(rows[0]?.hash);
+      expect(rows[2]?.prev_hash).toBe(rows[1]?.hash);
+      expect(ledger.verifySession(sessionId as string).ok).toBe(true);
+
+      // A second client initialize (after the first disconnects) → a second session.
+      await client.close();
+      const client2 = await connectClient(proxy);
+      expect(proxy.currentSessionId).not.toBe(sessionId);
+      expect(ledger.listSessions()).toHaveLength(2);
+      await client2.close();
+    } finally {
+      await proxy.close();
+      ledger.close();
+    }
+  });
+
   it("refuses to start when two downstream servers collide, and works with a prefix", async () => {
-    const collide = new SagazProxy({ servers: { one: toybox(join(dir, "a.db")), two: toybox(join(dir, "b.db")) } }, { log: () => {} });
+    const collide = new SagazProxy(cfgOf({ one: toybox(join(dir, "a.db")), two: toybox(join(dir, "b.db")) }), { log: () => {} });
     await expect(collide.start()).rejects.toThrow(/collision[\s\S]*"prefix": "two"/);
     await collide.close();
 
-    const prefixed = new SagazProxy({ servers: { one: toybox(join(dir, "a.db")), two: toybox(join(dir, "b.db"), "two") } }, { log: () => {} });
+    const prefixed = new SagazProxy(cfgOf({ one: toybox(join(dir, "a.db")), two: toybox(join(dir, "b.db"), "two") }), { log: () => {} });
     try {
       await prefixed.start();
       expect(prefixed.toolNames).toContain("send_email");
