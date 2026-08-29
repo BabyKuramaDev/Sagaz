@@ -99,11 +99,12 @@ describe("SagazProxy over a real toybox (stdio downstream)", () => {
     }
   });
 
-  it("records every call in the ledger: session per initialize, read via readOnlyHint, chained hashes", async () => {
+  it("records and classifies every call: session per initialize, R/C/I via the cascade, chained hashes", async () => {
     const db = join(dir, "world.db");
     toyboxCli(db, "seed");
     const ledger = new Ledger(join(dir, "ledger.db"));
-    const proxy = new SagazProxy(cfgOf({ toybox: toybox(db) }), { log: () => {}, ledger });
+    const config = parseConfig({ servers: { toybox: toybox(db) }, rules: [{ tool: "list_inbox", class: "unknown", reason: "user says so" }] });
+    const proxy = new SagazProxy(config, { log: () => {}, ledger });
     await proxy.start();
     expect(proxy.currentSessionId).toBeUndefined();
     const client = await connectClient(proxy);
@@ -116,13 +117,20 @@ describe("SagazProxy over a real toybox (stdio downstream)", () => {
       await client.callTool({ name: "list_contacts", arguments: {} });
       await client.callTool({ name: "create_contact", arguments: { name: "Alan Turing", email: "alan@bletchley.uk" } });
       await client.callTool({ name: "transfer_funds", arguments: { from_account: "acc-vendor", to_account: "acc-ops", amount_cents: 999_999_999 } });
+      await client.callTool({ name: "list_timeline", arguments: {} }); // read without readOnlyHint
+      await client.callTool({ name: "delete_contact", arguments: { id: 4 } }); // destructiveHint, delete_* → unknown
+      await client.callTool({ name: "list_inbox", arguments: {} }); // readOnlyHint, but a user rule overrides
 
       const rows = ledger.listEffects(sessionId as string);
       expect(rows.map((r) => [r.seq, r.tool, r.class, r.class_source, r.status])).toEqual([
         [1, "list_contacts", "read", "annotation", "ok"],
-        [2, "create_contact", null, null, "ok"],
-        [3, "transfer_funds", null, null, "error"],
+        [2, "create_contact", "R", "rule", "ok"],
+        [3, "transfer_funds", "I", "rule", "error"],
+        [4, "list_timeline", "read", "rule", "ok"],
+        [5, "delete_contact", "unknown", "rule", "ok"],
+        [6, "list_inbox", "unknown", "user", "ok"],
       ]);
+      expect(rows[5]?.class_reason).toBe("user says so");
       expect(JSON.parse(rows[1]?.args_json ?? "")).toEqual({ name: "Alan Turing", email: "alan@bletchley.uk" });
       expect(rows[0]?.prev_hash).toBe(session?.genesis_hash);
       expect(rows[1]?.prev_hash).toBe(rows[0]?.hash);

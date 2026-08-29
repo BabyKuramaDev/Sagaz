@@ -33,13 +33,29 @@ const LedgerConfigSchema = z.object({
   maxResultBytes: z.number().int().positive().default(DEFAULT_MAX_RESULT_BYTES),
 });
 
+/**
+ * User classification rule — classifier level 1, always wins over annotations and heuristics.
+ * `tool` is an exact downstream tool name or a glob where `*` matches any run of characters
+ * (`delete_*`, `*_draft`). `server` narrows the rule to one downstream. First matching rule in
+ * file order wins.
+ */
+const ClassificationRuleSchema = z.object({
+  tool: z.string().min(1),
+  server: z.string().regex(IDENT, "server must match [A-Za-z0-9_-]+").optional(),
+  class: z.enum(["read", "R", "C", "I", "unknown"]),
+  /** Stored as class_reason; defaults to a description of the rule. */
+  reason: z.string().min(1).optional(),
+});
+
 const ConfigSchema = z.object({
   servers: z.record(z.string().regex(IDENT, "server name must match [A-Za-z0-9_-]+"), ServerConfigSchema),
   ledger: LedgerConfigSchema.default({ path: DEFAULT_LEDGER_PATH, maxResultBytes: DEFAULT_MAX_RESULT_BYTES }),
+  rules: z.array(ClassificationRuleSchema).default([]),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 export type LedgerConfig = z.infer<typeof LedgerConfigSchema>;
+export type ClassificationRule = z.infer<typeof ClassificationRuleSchema>;
 export type SagazConfig = z.infer<typeof ConfigSchema>;
 
 export class ConfigError extends Error {
