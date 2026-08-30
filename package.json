@@ -21,6 +21,7 @@
     "vitest": "^4.1.11"
   },
   "pnpm": {
+    "//": "esbuild override: dependabot alert #1 (GHSA, low). Remove when tsup allows esbuild ^0.28.",
     "overrides": {
       "esbuild": "^0.28.1"
     }
