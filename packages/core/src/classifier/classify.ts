@@ -61,8 +61,12 @@ export function classify(input: ClassifyInput): Classification {
   // pre-state (when the inverse needs one) is captured before the call runs.
   const packed = matchPack(input.packs ?? [], input.tool, input.server);
   if (packed) {
-    const via = packed.entry.capture ? " from the captured pre-state" : " from the result";
-    return { class: "R", source: "pack", reason: `compensation pack "${packed.pack.name}": inverse ${packed.entry.inverse.tool}${via}` };
+    const via = packed.entry.capture
+      ? "from the captured pre-state"
+      : Object.values(packed.entry.inverse.args).some((ref) => ref.startsWith("$.result"))
+        ? "from the result"
+        : "from the call's args";
+    return { class: "R", source: "pack", reason: `compensation pack "${packed.pack.name}": inverse ${packed.entry.inverse.tool} ${via}` };
   }
 
   const ann = input.annotations;

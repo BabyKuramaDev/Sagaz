@@ -67,6 +67,11 @@ describe("parsePack — rejection quality (people write these by hand)", () => {
       bad((p) => ((((p["entries"] as unknown[])[1] as Record<string, Record<string, Record<string, string>>>)["inverse"]!["args"]!["id"] = "result.id"))),
     ).toThrow(/entries\.1\.inverse\.args\.id: "result\.id" is not a reference — expected \$\.args\.x or \$\.result\.x or \$\.pre_state\.x/);
   });
+  it("a bare root is not a reference either — the contract only describes fields", () => {
+    expect(
+      bad((p) => ((((p["entries"] as unknown[])[1] as Record<string, Record<string, Record<string, string>>>)["inverse"]!["args"]!["id"] = "$.result"))),
+    ).toThrow(/entries\.1\.inverse\.args\.id: "\$\.result" is not a reference/);
+  });
   it("an inverse reading $.pre_state without a capture is caught at parse time, not at runtime", () => {
     expect(
       bad((p) => delete ((p["entries"] as unknown[])[0] as Record<string, unknown>)["capture"]),

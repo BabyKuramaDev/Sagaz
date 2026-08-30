@@ -171,7 +171,10 @@ export class SagazProxy {
     this.ledger = opts.ledger;
     this.approvalPollMs = opts.approvalPollMs;
     this.preview = Boolean(opts.preview || config.preview);
-    this.packs = config.capture ? (opts.packs ?? config.packs) : [];
+    // Packs need the ledger as much as they need the capture flag: without one there is
+    // nowhere to store a pre-state or a plan, so claiming R by pack would be a false
+    // reversible — the same reasoning as `"capture": false`, applied to the ledger-less proxy.
+    this.packs = config.capture && opts.ledger ? (opts.packs ?? config.packs) : [];
     this.captureTimeoutMs = opts.captureTimeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
   }
 

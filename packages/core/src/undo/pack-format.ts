@@ -28,11 +28,16 @@ import type { CompensationPack } from "./packs.js";
 const IDENT = /^[A-Za-z0-9_-]+$/;
 const REFERENCE = /^\$\.(args|result|pre_state)((?:\.[A-Za-z0-9_-]+)*)$/;
 
-/** One arg value: a `$.…` reference restricted to the roots that exist at that point. */
+/**
+ * One arg value: a `$.…` reference restricted to the roots that exist at that point. A bare
+ * root (`"$.args"`) is refused: the contract only ever describes field references, and
+ * admitting the whole-payload form now would freeze it in — allowing it later is compatible,
+ * withdrawing it later is not.
+ */
 function reference(roots: readonly string[]): z.ZodString {
   return z.string().superRefine((value, ctx) => {
     const m = REFERENCE.exec(value);
-    if (!m) {
+    if (!m || m[2] === "") {
       ctx.addIssue({
         code: "custom",
         message: `"${value}" is not a reference — expected ${roots.map((r) => `$.${r}.x`).join(" or ")} (segments of letters, digits, _ or -)`,

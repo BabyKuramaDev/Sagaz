@@ -107,6 +107,9 @@ describe("classify level 2 (T11): compensation packs", () => {
       class: "R", source: "pack", reason: 'compensation pack "crm": inverse create_contact from the captured pre-state',
     });
     expect(classify({ tool: "create_contact", server: "s", packs })).toMatchObject({ class: "R", source: "pack", reason: expect.stringContaining("from the result") });
+    // A capture-less inverse mapping only from $.args must not claim the result as provenance.
+    const argsOnly = [{ name: "p", description: "d", entries: [{ tool: "toggle_flag", inverse: { tool: "toggle_flag", args: { id: "$.args.id" } } }] }];
+    expect(classify({ tool: "toggle_flag", server: "s", packs: argsOnly })).toMatchObject({ reason: expect.stringContaining("from the call's args") });
   });
   it("the destructiveHint cap does NOT apply to an R by pack — the cap existed because the inverse was unknown", () => {
     expect(classify({ tool: "delete_contact", server: "s", annotations: { destructiveHint: true }, packs })).toMatchObject({ class: "R", source: "pack" });

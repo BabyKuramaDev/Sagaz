@@ -296,6 +296,25 @@ describe("capture hook against a controllable downstream (failure modes and gate
     }
   });
 
+  it("a ledger-less proxy treats packs as inert: no R by pack where no plan could ever be stored", async () => {
+    // Without a ledger there is no pre-state and no plan — claiming R would wave the call
+    // through any policy that trusts R. Observable through the gate: unknown blocks, R would not.
+    const f = fake();
+    const config = parseConfig({ servers: { fake: { command: "unused" } }, policy: { class: { unknown: "block" } } });
+    const proxy = new SagazProxy(config, { log: () => {}, connect: f.connect, packs: packOf(packWith("read_thing")) });
+    await proxy.start();
+    const client = await connectClient(proxy);
+    try {
+      const r = (await client.callTool({ name: "delete_thing", arguments: { id: 7 } })) as CallToolResult;
+      expect(r.isError).toBe(true);
+      expect(text(r)).toContain("Sagaz blocked this call");
+      expect(f.calls).toEqual({});
+    } finally {
+      await client.close();
+      await proxy.close();
+    }
+  });
+
   it("preview: mutations run dry and the capture hook stays off", async () => {
     const t = await overFake({ preview: true }, packWith("read_thing"));
     try {
