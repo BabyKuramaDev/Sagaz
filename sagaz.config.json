@@ -5,5 +5,6 @@
       "args": ["packages/toybox/dist/index.js"],
       "env": { "TOYBOX_DB": "./toybox.db" }
     }
-  }
+  },
+  "packs": ["packages/toybox/sagaz-pack.json"]
 }

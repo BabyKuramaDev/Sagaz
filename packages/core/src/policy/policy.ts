@@ -13,7 +13,7 @@
  * stopped call is auditable history, that is the point.
  */
 import { DEFAULT_CLASS_POLICY, type PolicyAction, type PolicyConfig } from "../config.js";
-import { globToRegExp } from "../classifier/classify.js";
+import { globToRegExp } from "../glob.js";
 import type { EffectClass } from "../ledger/ledger.js";
 
 export interface PolicyVerdict {

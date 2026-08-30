@@ -19,6 +19,7 @@ export {
   parseConfig,
   type ClassificationRule,
   type LedgerConfig,
+  type ParseConfigOptions,
   type PolicyAction,
   type PolicyConfig,
   type PolicyToolRule,
@@ -29,4 +30,15 @@ export * from "./classifier/index.js";
 export * from "./ledger/index.js";
 export * from "./policy/index.js";
 export * from "./undo/index.js";
-export { DEFAULT_CAPTURE_TIMEOUT_MS, PROXY_NAME, SagazProxy, ToolCollisionError, buildRoutes, exposedName, type ProxyOptions } from "./proxy.js";
+export {
+  DEFAULT_CAPTURE_TIMEOUT_MS,
+  PROXY_NAME,
+  PackCollisionError,
+  SagazProxy,
+  ToolCollisionError,
+  assertNoPackCollisions,
+  buildRoutes,
+  exposedName,
+  probeDownstreamTools,
+  type ProxyOptions,
+} from "./proxy.js";

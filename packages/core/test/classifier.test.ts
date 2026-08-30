@@ -91,6 +91,37 @@ describe("classify cascade", () => {
   });
 });
 
+describe("classify level 2 (T11): compensation packs", () => {
+  const packs = [{
+    name: "crm",
+    description: "CRM inverses",
+    entries: [
+      { tool: "delete_contact", capture: { tool: "get_contact", args: { id: "$.args.id" } }, inverse: { tool: "create_contact", args: { id: "$.pre_state.id" } } },
+      { tool: "create_contact", inverse: { tool: "delete_contact", args: { id: "$.result.id" } } },
+      { tool: "wipe_all", server: "elsewhere", inverse: { tool: "restore_all", args: {} } },
+    ],
+  }];
+
+  it("a pack entry → R with source 'pack' and a reason citing the pack and the inverse", () => {
+    expect(classify({ tool: "delete_contact", server: "s", packs })).toEqual({
+      class: "R", source: "pack", reason: 'compensation pack "crm": inverse create_contact from the captured pre-state',
+    });
+    expect(classify({ tool: "create_contact", server: "s", packs })).toMatchObject({ class: "R", source: "pack", reason: expect.stringContaining("from the result") });
+  });
+  it("the destructiveHint cap does NOT apply to an R by pack — the cap existed because the inverse was unknown", () => {
+    expect(classify({ tool: "delete_contact", server: "s", annotations: { destructiveHint: true }, packs })).toMatchObject({ class: "R", source: "pack" });
+  });
+  it("user rules still ALWAYS win — over packs too", () => {
+    const rules = parseConfig({ servers: { s: { command: "x" } }, rules: [{ tool: "delete_contact", class: "I", reason: "not in my house" }] }).rules;
+    expect(classify({ tool: "delete_contact", server: "s", rules, packs })).toEqual({ class: "I", source: "user", reason: "not in my house" });
+  });
+  it("a server-scoped entry does not leak; no packs (or no match) falls through the cascade as before", () => {
+    expect(classify({ tool: "wipe_all", server: "s", packs })).toMatchObject({ class: "I", source: "rule" }); // heuristic wipe_* → I
+    expect(classify({ tool: "wipe_all", server: "elsewhere", packs })).toMatchObject({ class: "R", source: "pack" });
+    expect(classify({ tool: "delete_contact", server: "s" })).toMatchObject({ class: "unknown", source: "rule" });
+  });
+});
+
 describe("rules in sagaz.config.json", () => {
   it("defaults to none and validates class and server", () => {
     expect(parseConfig({ servers: { s: { command: "x" } } }).rules).toEqual([]);

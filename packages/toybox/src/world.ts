@@ -117,13 +117,21 @@ export class World {
     return this.db.prepare("SELECT * FROM contacts ORDER BY id").all() as Contact[];
   }
 
-  /** `company` accepts null as "no company" so an inverse derived from a pre-state can express it. */
-  createContact(input: { name: string; email: string; company?: string | null | undefined }): Contact {
+  /**
+   * `company` accepts null as "no company" so an inverse derived from a pre-state can express it.
+   * `id` is the restore semantics (T11): an inverse of `delete_contact` must restore IDENTITY,
+   * not just content — pass the original id to recreate the contact as the row it was. Omitted,
+   * the world assigns a fresh id as usual. AUTOINCREMENT keeps future ids above any restored one.
+   */
+  createContact(input: { id?: number | undefined; name: string; email: string; company?: string | null | undefined }): Contact {
     const existing = this.db.prepare("SELECT id FROM contacts WHERE email = ?").get(input.email);
     if (existing) throw new WorldError(`A contact with email ${input.email} already exists`);
+    if (input.id !== undefined && this.db.prepare("SELECT id FROM contacts WHERE id = ?").get(input.id)) {
+      throw new WorldError(`Contact ${input.id} already exists`);
+    }
     const info = this.db
-      .prepare("INSERT INTO contacts (name, email, company, created_at) VALUES (?, ?, ?, ?)")
-      .run(input.name, input.email, input.company ?? null, this.now());
+      .prepare("INSERT INTO contacts (id, name, email, company, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(input.id ?? null, input.name, input.email, input.company ?? null, this.now());
     return this.getContact(Number(info.lastInsertRowid));
   }
 

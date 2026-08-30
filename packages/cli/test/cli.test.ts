@@ -302,6 +302,81 @@ describe("sagaz preview-report / ledger on a dry session", () => {
   });
 });
 
+describe("sagaz packs (T11)", () => {
+  const toybox = fileURLToPath(new URL("../../toybox/dist/index.js", import.meta.url));
+  const officialPack = fileURLToPath(new URL("../../toybox/sagaz-pack.json", import.meta.url));
+
+  function writeConfig(extra: Record<string, unknown>) {
+    writeFileSync(configPath, JSON.stringify({
+      servers: { toybox: { command: process.execPath, args: [toybox], env: { TOYBOX_DB: join(dir, "world.db") } } },
+      ledger: { path: "ledger.db" },
+      ...extra,
+    }));
+  }
+
+  it("lists the official toybox pack and splits the downstream into covered / to-do / reads", () => {
+    writeConfig({ packs: [officialPack] });
+    const { code, out } = sagaz("packs");
+    expect(code).toBe(0);
+    expect(out).toContain("1 pack(s) loaded");
+    expect(out).toMatch(/pack toybox-crm — Deterministic inverses/);
+    expect(out).toMatch(/delete_contact {2}→ {2}create_contact \(captures get_contact → pre-state\)/);
+    expect(out).toMatch(/why: .*restores identity, not just content/);
+    // Covered: every CRM mutation, R via the pack.
+    expect(out).toMatch(/covered by a pack \(3\)[\s\S]*create_contact\s+R\s+toybox-crm → delete_contact\b/);
+    expect(out).toMatch(/delete_contact\s+R\s+toybox-crm → create_contact \(captures get_contact\)/);
+    expect(out).toMatch(/update_contact\s+R\s+toybox-crm → update_contact \(captures get_contact\)/);
+    // The to-do list: each uncovered mutation with the class that explains why.
+    expect(out).toMatch(/not covered \(4\) — your to-do list/);
+    expect(out).toMatch(/send_email\s+C\s+.*cannot be unsent/);
+    expect(out).toMatch(/post_tweet\s+C\s+/);
+    expect(out).toMatch(/delete_tweet\s+unknown\s+.*previous state/);
+    expect(out).toMatch(/transfer_funds\s+I\s+.*no inverse exists/);
+    // Reads are not chores.
+    expect(out).toMatch(/reads, nothing to undo \(5\): get_contact, list_accounts, list_contacts, list_inbox, list_timeline/);
+  });
+
+  it("no packs: says so and the whole downstream lands on the to-do list", () => {
+    writeConfig({});
+    const { code, out } = sagaz("packs");
+    expect(code).toBe(0);
+    expect(out).toContain("no compensation packs loaded");
+    expect(out).toMatch(/not covered \(7\)/);
+    expect(out).toMatch(/delete_contact\s+unknown\s+/); // without the pack, back to unknown
+  });
+
+  it("capture off: packs load but are declared inert, and nothing classifies R by pack", () => {
+    writeConfig({ packs: [officialPack], capture: false });
+    const out = sagaz("packs").out;
+    expect(out).toMatch(/inert: "capture": false/);
+    expect(out).not.toMatch(/covered by a pack/);
+    expect(out).toMatch(/delete_contact\s+unknown\s+/);
+  });
+
+  it("a handwritten pack with a typo fails with the file path and the exact field", () => {
+    const bad = join(dir, "my-pack.json");
+    writeFileSync(bad, JSON.stringify({ name: "mine", description: "d", entries: [{ tool: "delete_thing", inverse: { tool: "restore_thing", args: { id: "$.result_id" } } }] }));
+    writeConfig({ packs: ["my-pack.json"] });
+    const { code, err } = sagaz("packs");
+    expect(code).toBe(1);
+    expect(err).toMatch(/Invalid compensation pack .*my-pack\.json/);
+    expect(err).toMatch(/entries\.0\.inverse\.args\.id: "\$\.result_id" is not a reference — expected \$\.args\.x or \$\.result\.x or \$\.pre_state\.x/);
+  });
+
+  it("two packs covering the same tool fail `packs` and `serve` alike, naming both packs", () => {
+    const rival = join(dir, "rival.json");
+    writeFileSync(rival, JSON.stringify({ name: "rival", description: "also covers deletes", entries: [{ tool: "delete_*", inverse: { tool: "create_contact", args: {} } }] }));
+    writeConfig({ packs: [officialPack, "rival.json"] });
+    const fromPacks = sagaz("packs");
+    expect(fromPacks.code).toBe(1);
+    expect(fromPacks.err).toMatch(/Compensation pack collision: tool "delete_contact" on server "toybox" is covered by pack "toybox-crm" \(entry "delete_contact"\) and pack "rival" \(entry "delete_\*"\)/);
+    expect(fromPacks.err).toMatch(/never picks an inverse by magic/);
+    const fromServe = sagaz("serve");
+    expect(fromServe.code).toBe(1);
+    expect(fromServe.err).toMatch(/Compensation pack collision/);
+  });
+});
+
 describe("sagaz ledger undo column / status dry counts (T10)", () => {
   /** One planned inverse, one no-plan with its reason, one dry row. */
   beforeEach(() => {

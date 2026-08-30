@@ -1,5 +1,5 @@
 /**
- * Capture hook + undo plans (T10): the mechanism compensation packs run on.
+ * Compensation packs (T10 mechanism + T11 format): the declarative `tool → inverse` map.
  *
  * A pack entry says, for one mutating tool: how to read the pre-state before the call runs
  * (`capture`, optional — the inverse of a delete needs the row before it dies) and how to build
@@ -8,11 +8,11 @@
  * forwarding (afterwards the pre-state no longer exists); on a successful close it derives
  * `undo_json` and marks `undo_status = 'planned'`. See docs/T0-recon-y-schema.md §3.5–§3.6.
  *
- * INTERNAL / PROVISIONAL data: `TOYBOX_TEST_PACK` below is a hardcoded stand-in that exercises
- * the mechanism against the toybox until T11 ships the declarative JSON pack format and its
- * loader (`"packs"` in sagaz.config.json, glob matching, the official toybox pack file). The
- * mechanism stays; where entries come from is what T11 replaces.
+ * Packs are written by users as JSON (inline in sagaz.config.json or as files); the strict
+ * schema and its loader live in pack-format.ts. This module is the runtime: matching and
+ * reference resolution.
  */
+import { globToRegExp } from "../glob.js";
 
 /** Reads the pre-state before the mutating call is forwarded. Args map from `$.args.*` only. */
 export interface CaptureSpec {
@@ -27,12 +27,24 @@ export interface InverseSpec {
 }
 
 export interface PackEntry {
-  /** Downstream tool name, exact match (globs arrive with T11's real format). */
+  /** Downstream tool name: exact, or a glob where `*` matches any run of characters. */
   tool: string;
   /** Restricts the entry to one downstream server; matches any when omitted. */
-  server?: string;
-  capture?: CaptureSpec;
+  server?: string | undefined;
+  capture?: CaptureSpec | undefined;
   inverse: InverseSpec;
+  /** Human note: why this is the inverse. Never interpreted; shown by `sagaz packs`. */
+  note?: string | undefined;
+}
+
+/**
+ * A compensation pack: a named collection of entries. `name` identifies the pack in
+ * `sagaz packs`, in `class_reason` and in collision errors; `description` says what it covers.
+ */
+export interface CompensationPack {
+  name: string;
+  description: string;
+  entries: PackEntry[];
 }
 
 /** undo_json of a planned deterministic inverse (T0 §3, v1 format). */
@@ -53,9 +65,28 @@ export interface UndoNoPlan {
   reason: string;
 }
 
-/** First entry whose tool (and server, when declared) matches. */
+/** First entry whose tool (exact or glob) and server (when declared) match. */
 export function matchPackEntry(entries: readonly PackEntry[], tool: string, server: string): PackEntry | undefined {
-  return entries.find((e) => (e.server === undefined || e.server === server) && e.tool === tool);
+  return entries.find((e) => (e.server === undefined || e.server === server) && globToRegExp(e.tool).test(tool));
+}
+
+export interface PackMatch {
+  pack: CompensationPack;
+  entry: PackEntry;
+}
+
+/**
+ * First matching entry across packs. WITHIN a pack, entry order is the author's and first match
+ * wins (like classification rules); BETWEEN packs there is no defined order, so the proxy
+ * refuses to start when two packs cover the same downstream tool (see assertNoPackCollisions
+ * in proxy.ts) — by the time this runs, at most one pack can match.
+ */
+export function matchPack(packs: readonly CompensationPack[], tool: string, server: string): PackMatch | undefined {
+  for (const pack of packs) {
+    const entry = matchPackEntry(pack.entries, tool, server);
+    if (entry) return { pack, entry };
+  }
+  return undefined;
 }
 
 export class PathError extends Error {
@@ -119,31 +150,3 @@ export function payloadOf(result: unknown): unknown {
     return undefined;
   }
 }
-
-/**
- * INTERNAL / PROVISIONAL (see module comment): minimal toybox entries to exercise the
- * mechanism end to end — an inverse derived from the result alone (create_contact) and one
- * that needs the pre-state captured before the row dies (delete_contact). Replaced by the
- * official toybox pack file in T11.
- *
- * Known gap, deliberate for T10: the delete_contact plan restores the contact's CONTENT but
- * not its identity — create_contact does not accept an id yet, so the restored row gets a new
- * one. T11's precondition extends create_contact with an optional id (restore semantics) and
- * its pack must then derive `id: "$.pre_state.id"`. The general pack design principle behind
- * it: every write tool must be able to express any state its capture read can return, or the
- * inverse is inexpressible (the same identity problem that makes delete_tweet C, not R).
- */
-export const TOYBOX_TEST_PACK: readonly PackEntry[] = [
-  {
-    tool: "create_contact",
-    inverse: { tool: "delete_contact", args: { id: "$.result.id" } },
-  },
-  {
-    tool: "delete_contact",
-    capture: { tool: "get_contact", args: { id: "$.args.id" } },
-    inverse: {
-      tool: "create_contact",
-      args: { name: "$.pre_state.name", email: "$.pre_state.email", company: "$.pre_state.company" },
-    },
-  },
-];
