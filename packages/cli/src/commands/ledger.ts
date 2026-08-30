@@ -73,6 +73,7 @@ function classCell(r: EffectRow, style: Style): string {
  * `sagaz ledger --json` shows it in full).
  */
 function undoCell(r: EffectRow, style: Style): string {
+  if (r.undo_status === "failed" || r.undo_status === "impossible") return style.red(r.undo_status);
   if (r.undo_status !== "none") return style.green(r.undo_status);
   if (r.undo_json !== null) return style.dim("no plan");
   return "";

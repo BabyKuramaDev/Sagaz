@@ -20,7 +20,7 @@ import { z } from "zod";
 import { SagazProxy } from "../src/proxy.js";
 import { parseConfig } from "../src/config.js";
 import { Ledger, type EffectRow } from "../src/ledger/index.js";
-import { PathError, mapArgs, payloadOf, resolveReference, type PackEntry } from "../src/undo/index.js";
+import { PathError, mapArgs, matchPackEntry, payloadOf, resolveReference, type PackEntry } from "../src/undo/index.js";
 
 const TOYBOX_BIN = fileURLToPath(new URL("../../toybox/dist/index.js", import.meta.url));
 if (!existsSync(TOYBOX_BIN)) throw new Error(`toybox not built (${TOYBOX_BIN}). Run \`pnpm build\` before \`pnpm test\`.`);
@@ -205,6 +205,10 @@ describe("capture hook against a controllable downstream (failure modes and gate
         count("read_fails");
         return { isError: true, content: [{ type: "text", text: "reader exploded" }] };
       });
+      server.registerTool("read_big", { inputSchema: { id: z.number() } }, ({ id }) => {
+        count("read_big");
+        return { content: [{ type: "text", text: JSON.stringify({ id, value: "x".repeat(2000) }) }] };
+      });
       server.registerTool("delete_thing", { inputSchema: { id: z.number() } }, ({ id }) => {
         count("delete_thing");
         return { content: [{ type: "text", text: JSON.stringify({ id, deleted: true }) }] };
@@ -222,9 +226,9 @@ describe("capture hook against a controllable downstream (failure modes and gate
     inverse: { tool: "restore_thing", args: { id: "$.pre_state.id", value: "$.pre_state.value" } },
   }];
 
-  async function overFake(extra: Record<string, unknown>, packs: PackEntry[], opts: Record<string, unknown> = {}) {
+  async function overFake(extra: Record<string, unknown>, packs: PackEntry[], opts: Record<string, unknown> = {}, ledgerOpts: Record<string, unknown> = {}) {
     const f = fake();
-    const ledger = new Ledger(join(dir, "ledger.db"));
+    const ledger = new Ledger(join(dir, "ledger.db"), ledgerOpts);
     const config = parseConfig({ servers: { fake: { command: "unused" } }, ...extra });
     const proxy = new SagazProxy(config, { log: () => {}, ledger, connect: f.connect, packs, ...opts });
     await proxy.start();
@@ -292,6 +296,27 @@ describe("capture hook against a controllable downstream (failure modes and gate
     }
   });
 
+  it("an oversized derived plan is refused whole — no truncated inverses; the no-plan and the capped pre-state say why", async () => {
+    const packs: PackEntry[] = [{
+      tool: "delete_thing",
+      capture: { tool: "read_big", args: { id: "$.args.id" } },
+      inverse: { tool: "restore_thing", args: { id: "$.pre_state.id", value: "$.pre_state.value" } },
+    }];
+    const t = await overFake({ ledger: { maxResultBytes: 256 } }, packs, {}, { maxResultBytes: 256 });
+    try {
+      const r = (await t.client.callTool({ name: "delete_thing", arguments: { id: 7 } })) as CallToolResult;
+      expect(r.isError).toBeFalsy();
+      const [row] = t.ledger.listEffects(t.proxy.currentSessionId as string);
+      expect(row).toMatchObject({ status: "ok", undo_status: "none" });
+      expect(undoOf(row!)).toMatchObject({ kind: "no_plan", reason: expect.stringContaining("over ledger.maxResultBytes (256)") });
+      // The stored pre-state was capped by the same limit: what the ledger keeps is marked, never silently cut.
+      expect(JSON.parse(row!.pre_state_json ?? "")).toHaveProperty("$truncated");
+      expect(t.ledger.verifySession(t.proxy.currentSessionId as string)).toMatchObject({ ok: true });
+    } finally {
+      await t.close();
+    }
+  });
+
   it("a successful effect whose downstream call errors gets no plan: nothing happened to undo", async () => {
     // delete_thing with a string id fails zod validation downstream → the tool call errors.
     const t = await overFake({}, packWith("read_thing"));
@@ -320,8 +345,26 @@ describe("ledger guards for the T10 columns", () => {
     expect(ledger.get(id)).toMatchObject({ undo_status: "planned", pre_state_json: JSON.stringify({ content: [] }) });
     // undo columns live outside the hash: the lifecycle write leaves the chain intact.
     expect(ledger.verifySession(s.id)).toMatchObject({ ok: true });
+    // undoJson omitted keeps the plan; null clears it to SQL NULL (not the JSON text "null").
+    ledger.setUndo(id, { undoStatus: "failed" });
+    expect(ledger.get(id)).toMatchObject({ undo_status: "failed", undo_json: expect.stringContaining("tool_call") });
+    ledger.setUndo(id, { undoStatus: "none", undoJson: null });
+    expect(ledger.get(id)).toMatchObject({ undo_status: "none", undo_json: null });
     expect(() => ledger.setUndo("nope", { undoStatus: "none" })).toThrow(/not found/);
     ledger.close();
+  });
+});
+
+describe("pack matching (undo/packs)", () => {
+  it("honours the optional server restriction; an unscoped entry matches any server, first match wins", () => {
+    const entries: PackEntry[] = [
+      { tool: "t", server: "a", inverse: { tool: "u", args: {} } },
+      { tool: "t", inverse: { tool: "v", args: {} } },
+    ];
+    expect(matchPackEntry(entries, "t", "a")?.inverse.tool).toBe("u");
+    expect(matchPackEntry(entries, "t", "b")?.inverse.tool).toBe("v");
+    expect(matchPackEntry([entries[0]!], "t", "b")).toBeUndefined();
+    expect(matchPackEntry(entries, "other", "a")).toBeUndefined();
   });
 });
 

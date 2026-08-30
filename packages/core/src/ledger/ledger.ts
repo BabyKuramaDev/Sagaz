@@ -296,14 +296,17 @@ export class Ledger {
    * outside the hash chain by design (T0 §3.5) — they mutate as the plan advances — so this is
    * the one legal UPDATE on a closed row. Refused while the effect is still pending: a plan
    * describes how to undo something that happened.
+   *
+   * Deliberately a raw write: transition legality (planned → executed | failed, never back)
+   * belongs to the caller — T12's rollback executor is the one that drives the lifecycle.
+   * `undoJson` undefined keeps the stored plan; null clears it.
    */
   setUndo(id: string, input: { undoStatus: UndoStatus; undoJson?: unknown }): void {
     const effect = this.get(id);
     if (!effect) throw new Error(`Effect ${id} not found`);
     if (effect.status === "pending") throw new Error(`Effect ${id} is still pending — an undo plan needs a closed effect`);
-    this.db
-      .prepare("UPDATE effects SET undo_status = ?, undo_json = ? WHERE id = ?")
-      .run(input.undoStatus, input.undoJson === undefined ? effect.undo_json : JSON.stringify(input.undoJson), id);
+    const json = input.undoJson === undefined ? effect.undo_json : input.undoJson === null ? null : JSON.stringify(input.undoJson);
+    this.db.prepare("UPDATE effects SET undo_status = ?, undo_json = ? WHERE id = ?").run(input.undoStatus, json, id);
   }
 
   get(id: string): EffectRow | undefined {

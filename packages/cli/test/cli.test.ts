@@ -315,6 +315,9 @@ describe("sagaz ledger undo column / status dry counts (T10)", () => {
     ledger.setUndo(noPlan, { undoStatus: "none", undoJson: { kind: "no_plan", reason: "capture read get_contact failed: gone" } });
     const dry = ledger.begin({ sessionId: s.id, server: "toybox", tool: "post_tweet", args: { text: "hi" }, classification: { class: "C", source: "rule", reason: "post_*" } });
     ledger.end(dry, { status: "dry", result: { content: [] } });
+    const failed = ledger.begin({ sessionId: s.id, server: "toybox", tool: "update_contact", args: { id: 2 } });
+    ledger.end(failed, { status: "ok", result: { content: [] } });
+    ledger.setUndo(failed, { undoStatus: "failed", undoJson: { kind: "tool_call", server: "toybox", tool: "update_contact", args: { id: 2 } } });
     ledger.close();
   });
 
@@ -323,6 +326,10 @@ describe("sagaz ledger undo column / status dry counts (T10)", () => {
     expect(out).toMatch(/result\s+id\s+undo/);
     expect(out).toMatch(/create_contact[^\n]*\bplanned\b/);
     expect(out).toMatch(/delete_contact[^\n]*\bno plan\b/);
+    // Lifecycle colours: planned is green, a failed undo must never look green.
+    const colour = spawnSync(process.execPath, [bin, "--config", configPath, "ledger"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "", FORCE_COLOR: "1" } }).stdout;
+    expect(colour).toContain("\x1b[32mplanned\x1b[39m");
+    expect(colour).toContain("\x1b[31mfailed\x1b[39m");
     // --json carries the plan and the no-plan descriptor in full.
     const rows = sagaz("ledger", "--json").out.trim().split("\n").map((l) => JSON.parse(l) as { undo_json: string | null; undo_status: string });
     expect(JSON.parse(rows[0]!.undo_json ?? "")).toEqual({ kind: "tool_call", server: "toybox", tool: "delete_contact", args: { id: 4 } });
@@ -336,7 +343,7 @@ describe("sagaz ledger undo column / status dry counts (T10)", () => {
 
   it("status counts dry effects in the state line and per session", () => {
     const out = sagaz("status").out;
-    expect(out).toContain("1 session(s), 3 effect(s), 1 dry");
-    expect(out).toMatch(/claude-code 2\.0\.0\s+3 \(1 dry\)/);
+    expect(out).toContain("1 session(s), 4 effect(s), 1 dry");
+    expect(out).toMatch(/claude-code 2\.0\.0\s+4 \(1 dry\)/);
   });
 });

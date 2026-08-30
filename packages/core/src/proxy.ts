@@ -291,8 +291,9 @@ export class SagazProxy {
     // (a blocked call captures nothing) and before the forward (afterwards the pre-state no
     // longer exists). A capture failure is logged and later recorded as a no-plan, never
     // surfaced: Sagaz observes and protects, it does not break the agent's call.
-    // (In preview only reads reach this point and nothing needs undoing, so the hook stays off.)
-    const pack = this.config.capture && !this.preview ? matchPackEntry(this.packs, route.downstreamName, route.server) : undefined;
+    // (In preview only reads reach this point and nothing needs undoing, so the hook stays off;
+    // without a ledger there is nowhere to store a pre-state or a plan, so nothing is read either.)
+    const pack = this.ledger && this.config.capture && !this.preview ? matchPackEntry(this.packs, route.downstreamName, route.server) : undefined;
     const captured = pack?.capture ? await this.capture(pack.capture, downstream, effectId, args) : undefined;
 
     let result: CallToolResult;
@@ -377,8 +378,18 @@ export class SagazProxy {
     try {
       const scope = { args, result: payloadOf(result), pre_state: captured ? payloadOf(captured.preState) : undefined };
       const undoArgs = mapArgs(pack.inverse.args, scope);
+      const plan: UndoToolCall = { kind: "tool_call", server: route.server, tool: pack.inverse.tool, args: undoArgs };
+      // A plan is stored whole or not at all: a truncated inverse is a corrupted inverse. The
+      // pre-state row is capped by the same limit, so an oversized plan means the data to undo
+      // this effect would not survive the ledger either.
+      const bytes = Buffer.byteLength(JSON.stringify(plan), "utf8");
+      if (bytes > this.config.ledger.maxResultBytes) {
+        const reason = `derived plan for ${pack.inverse.tool} is ${bytes} bytes, over ledger.maxResultBytes (${this.config.ledger.maxResultBytes}) — refusing to store a truncated inverse`;
+        this.log(`sagaz: no undo plan for ${route.downstreamName} — ${reason}`);
+        return record({ undoStatus: "none", undoJson: { kind: "no_plan", reason } });
+      }
       this.log(`sagaz: undo planned for ${route.downstreamName} → ${pack.inverse.tool}`);
-      record({ undoStatus: "planned", undoJson: { kind: "tool_call", server: route.server, tool: pack.inverse.tool, args: undoArgs } });
+      record({ undoStatus: "planned", undoJson: plan });
     } catch (err) {
       const reason = `cannot derive inverse ${pack.inverse.tool}: ${err instanceof Error ? err.message : String(err)}`;
       this.log(`sagaz: no undo plan for ${route.downstreamName} — ${reason}`);
