@@ -18,9 +18,6 @@
     "testing",
     "demo"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "type": "module",
   "bin": {
     "sagaz-toybox": "./dist/index.js"

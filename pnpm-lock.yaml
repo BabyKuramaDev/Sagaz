@@ -26,16 +26,19 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.5.4)
-      sagaz-core:
-        specifier: workspace:*
-        version: link:../core
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^9.6.0
         version: 9.6.0
-      better-sqlite3:
-        specifier: ^12.11.1
-        version: 12.11.1
+      sagaz-core:
+        specifier: workspace:*
+        version: link:../core
 
   packages/core:
     dependencies:
