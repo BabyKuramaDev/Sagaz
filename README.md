@@ -8,7 +8,11 @@ The goal: one undo for everything your agent touched — including what no snaps
 
 ## Status
 
-Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and so is **Phase 1**: every call is classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Since T8 Sagaz also *gates*: by default an irreversible call is held until you approve it from another terminal, and you can block or confirm any class or tool by policy. Since T9 there is *preview*: run the whole session dry and get a report of what the agent would have done to the world. That completes Phase 1; no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
+**Pre-alpha.** Sagaz is under active development and **there is no undo yet** — today it records, classifies, gates and previews; it does not yet reverse anything. Do not put it in front of agents touching production systems and expect a safety net that isn't built. A gate you configured as `allow` will let the call through — the agent's actions are still the agent's actions. Use it on toy worlds and low-stakes setups while it grows. (See the MIT license for the formal no-warranty terms.)
+
+**Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and so is **Phase 1**: every call is classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Since T8 Sagaz also *gates*: by default an irreversible call is held until you approve it from another terminal, and you can block or confirm any class or tool by policy. Since T9 there is *preview*: run the whole session dry and get a report of what the agent would have done to the world. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
+
+On npm, `sagaz-mcp@0.0.1` is a placeholder that reserves the name; the real package ships with the first release. Until then, run from a clone.
 
 ## Quickstart
 
@@ -29,7 +33,7 @@ node packages/cli/dist/index.js verify          # walk the hash chain
 node packages/toybox/dist/index.js inspect      # what the world looks like now
 ```
 
-To have `sagaz` on your PATH while developing: `pnpm --filter sagaz-mcp link --global`. When published, the CLI will be `npx sagaz-mcp` (the bare `sagaz` name on npm is an unrelated package).
+To have `sagaz` on your PATH while developing: `pnpm --filter sagaz-mcp link --global`. Once released, the CLI will be `npx sagaz-mcp` (the bare `sagaz` name on npm is an unrelated package).
 
 ## Reading the ledger
 
@@ -135,7 +139,7 @@ pnpm install && pnpm build && pnpm test
 node packages/cli/dist/index.js --version
 ```
 
-Packages: [`sagaz-core`](packages/core) (proxy + ledger), [`sagaz-mcp`](packages/cli) (the `sagaz` CLI), [`sagaz-toybox`](packages/toybox).
+Workspace packages: [`packages/core`](packages/core) (proxy + ledger, `sagaz-core`), [`packages/cli`](packages/cli) (the `sagaz` CLI), [`packages/toybox`](packages/toybox) (the demo world). **Only one package is published: `sagaz-mcp`**, the CLI with `sagaz-core` bundled in (`better-sqlite3` stays a native, external dependency). `sagaz-core` and `sagaz-toybox` are private workspace packages and are never published.
 
 ## How effects get their class
 
@@ -168,7 +172,7 @@ Every `tools/call` that crosses Sagaz is recorded in the **effect ledger**, a lo
 
 Tool names pass through unchanged, whatever the number of servers. If two servers expose the same tool name, Sagaz refuses to start and tells you to add an explicit `"prefix": "name"` to one of them (`name__tool`). Prefixes are never applied automatically.
 
-Phase 0 scope: `tools/list`, `tools/call` and `tools/list_changed` are forwarded. `initialize` is answered by Sagaz itself (it cannot be forwarded verbatim with N downstreams); downstream `instructions` are concatenated and passed on (known pending: label each block with its server name once multi-server setups are common). Resources and prompts are not proxied yet and are not announced in capabilities.
+Current scope: `tools/list`, `tools/call` and `tools/list_changed` are forwarded. `initialize` is answered by Sagaz itself (it cannot be forwarded verbatim with N downstreams); downstream `instructions` are concatenated and passed on (known pending: label each block with its server name once multi-server setups are common). Resources and prompts are not proxied yet and are not announced in capabilities.
 
 The repo ships a `.mcp.json` and a `sagaz.config.json` wired this way, so Claude Code opened in this directory drives the [toybox](packages/toybox/README.md) world through Sagaz.
 
