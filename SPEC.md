@@ -2,7 +2,7 @@
 
 > **Undo para agentes de IA.** Un proxy MCP open source que registra cada efecto que tus agentes producen en el mundo, clasifica su reversibilidad antes de ejecutarlo, y te da preview, checkpoint, rollback y compensaciones. Git para las acciones de tus agentes.
 
-**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), **Fase 1 completa (T7 clasificador, T8 gates, T9 preview)**; siguiente: Fase 2 (§6c, T10–T12) — el lanzamiento (§7) se dispara al completar T12. Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b–§4d.
+**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), Fase 1 completa (T7–T9), **Fase 2 en curso: T10 (capture hook + planes de undo) hecho**; siguiente: T11–T12 (§6c) — el lanzamiento (§7) se dispara al completar T12. Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b–§4d.
 **Licencia:** MIT
 **Objetivo primario:** peso en la industria (revuelo, adopción, vocabulario propio), no revenue.
 **Acto 2 (futuro, fuera de scope):** el ledger como base de "Compliance Officer para sistemas de IA".
@@ -164,7 +164,7 @@ Modo de sesión (`sagaz serve --preview` / `"preview": true`), no por call: "cor
 
 **Nota de scope:** la compensación semántica generada por LLM (tipo C) es Fase 3, post-lanzamiento. El lanzamiento sale con rollback determinístico impecable; en Fase 2 un efecto C se lista, no se compensa.
 
-**T10 — Capture hook + planes de undo**
+**T10 — Capture hook + planes de undo** — **hecho** (30-08-2026; pack interno provisorio hasta T11 — `TOYBOX_TEST_PACK` en `packages/core/src/undo/packs.ts`, con la nota del id no restaurado que T11 cierra; timeout de captura 5s; reel versionado en `examples/reels/t10-capture.mjs` — convención desde acá: cada ticket deja su reel)
 El proxy, al interceptar una call mutante cuyo tool tiene entrada en un compensation pack: (1) ejecuta la lectura de captura declarada por el pack ANTES de reenviar, guardando el resultado en `pre_state_json` (que entra al hash con el cierre del efecto, como ya congela T0); (2) tras el cierre exitoso del efecto, genera `undo_json` — el plan de inversa, derivado del pack + args + resultado + pre-estado — y marca `undo_status = 'planned'` (UPDATE de ciclo de vida, fuera de la cadena de hashes, como ya contempla T0 §3.5). Efectos sin pack quedan como hoy. Decisiones: la captura corre SIEMPRE que el pack exista — sin llave por-tool; una sola config global `"capture": false` desactiva todo. Si la lectura de captura falla, el efecto se ejecuta igual y queda `undo_status = 'none'` con el porqué registrado en el ledger (`undo_json` guarda el descriptor de no-plan con su razón) — la captura nunca bloquea la operación del agente: Sagaz observa y protege, no rompe.
 ✓ Checkpoint: reel del toybox con un pack mínimo hardcodeado de prueba, mostrando `pre_state_json` poblado y los planes en `--json`.
 
