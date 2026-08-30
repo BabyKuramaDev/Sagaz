@@ -2,7 +2,7 @@
 
 > **Undo para agentes de IA.** Un proxy MCP open source que registra cada efecto que tus agentes producen en el mundo, clasifica su reversibilidad antes de ejecutarlo, y te da preview, checkpoint, rollback y compensaciones. Git para las acciones de tus agentes.
 
-**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), **Fase 1 completa (T7 clasificador, T8 gates, T9 preview)**; siguiente: lanzamiento (§7) y Fase 2. Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
+**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), **Fase 1 completa (T7 clasificador, T8 gates, T9 preview)**; siguiente: Fase 2 (§6c, T10–T12) — el lanzamiento (§7) se dispara al completar T12. Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b–§4d.
 **Licencia:** MIT
 **Objetivo primario:** peso en la industria (revuelo, adopción, vocabulario propio), no revenue.
 **Acto 2 (futuro, fuera de scope):** el ledger como base de "Compliance Officer para sistemas de IA".
@@ -82,7 +82,7 @@ Los agentes ejecutan acciones sobre el mundo real (DBs, APIs, emails, archivos) 
   - Tipo R: mapa declarativo `tool → inversa` (provisto por packs por dominio + config del usuario).
   - Tipo C: generación por LLM con contexto del efecto + resultado, SIEMPRE con aprobación humana antes de ejecutar. Una compensación mal generada es un segundo incidente.
 - **Policy/Gates**: reglas simples en config — `tipo I → bloquear | pedir confirmación`, `tool X → siempre preguntar`, umbrales. (Mínimo viable de "engarce" sin competir con los gateways.)
-- **CLI**: hoy `sagaz serve [--preview]`, `sagaz ledger`, `sagaz status`, `sagaz verify`, `sagaz pending / approve / deny`, `sagaz preview-report`; después `sagaz checkpoint`, `sagaz rollback [--dry]`. Dashboard web queda para Fase 4.
+- **CLI**: hoy `sagaz serve [--preview]`, `sagaz ledger`, `sagaz status`, `sagaz verify`, `sagaz pending / approve / deny`, `sagaz preview-report`; en Fase 2 (§6c) `sagaz checkpoint [label]`, `sagaz rollback [--to <checkpoint|id>] [--dry] [--session last]`. Dashboard web queda para Fase 4.
 
 **Decisiones técnicas:**
 
@@ -102,13 +102,13 @@ Los agentes ejecutan acciones sobre el mundo real (DBs, APIs, emails, archivos) 
 Proxy pass-through funcionando con Claude Code + ledger persistente + CLI para verlo. Sin clasificación, sin rollback. Éxito = "corrí mi agente a través de Sagaz y puedo ver cada efecto que produjo".
 
 **Fase 1 — Ojos (clasificación + preview)** — **completa** (T7–T9, tag `v0.2.0-phase1`, 29-08-2026)
-Clasificador R/C/I (niveles 1 y 2, sin LLM) + preview + gates básicos por política. Éxito = "Sagaz me frenó un `DROP TABLE` y me mostró qué iba a tocar antes de tocarlo". **Este es el momento del primer post/lanzamiento público** — preview + gate ya es demo viral con el toybox.
+Clasificador R/C/I (niveles 1 y 2, sin LLM) + preview + gates básicos por política. Éxito = "Sagaz me frenó un `DROP TABLE` y me mostró qué iba a tocar antes de tocarlo". Preview + gate ya es demo viral con el toybox y alimenta el build-in-public, pero el lanzamiento formal se movió al cierre de Fase 2 (decisión T9.5, §7).
 
-**Fase 2 — Manos (rollback determinístico)**
-Checkpoint + rollback de efectos tipo R con packs de compensación (JSON declarativo, con capture hook) para 2-3 dominios (empezar por: el toybox de efectos externos para demo, Postgres, y UN SaaS con API amable — GitHub issues o similar; el filesystem entra como un pack más, sin shadow git). Éxito = el reel de "el agente rompió todo → `sagaz rollback` → todo vuelve" — la demo insignia es compensar un envío, no restaurar un archivo.
+**Fase 2 — Manos (rollback determinístico)** — tickets en §6c (T10–T12)
+Capture hook + planes de undo (T10), compensation packs en JSON declarativo con el pack oficial del toybox (T11), checkpoint + rollback (T12). Los packs de más dominios (Postgres, UN SaaS con API amable — GitHub issues o similar — y el filesystem como un pack más, sin shadow git) llegan sobre el mismo mecanismo una vez probado; no bloquean la fase. Éxito = el reel de "el agente rompió todo → `sagaz rollback` → todo vuelve". **Al completar T12 se dispara el lanzamiento público (§7).**
 
-**Fase 3 — Cerebro (compensación semántica)**
-Tipo C: LLM genera la compensación propuesta, humano aprueba, se ejecuta, queda en el ledger. El anti-prompt completo. La parte más novedosa y más citable (acá va el blog post técnico serio).
+**Fase 3 — Cerebro (compensación semántica)** — post-lanzamiento
+Tipo C: LLM genera la compensación propuesta, humano aprueba, se ejecuta, queda en el ledger. El anti-prompt completo. La parte más novedosa y más citable (acá va el blog post técnico serio). La demo insignia del producto — compensar un envío, no restaurar un archivo — se completa acá.
 
 **Fase 4 — Cara (dashboard + ecosistema)**
 Dashboard web local, packs de compensación como plugins de la comunidad, streamable HTTP, integración con más harnesses.
@@ -160,10 +160,26 @@ Política de fábrica = guardián (`I → confirm`, el resto `allow`); `policy.c
 Modo de sesión (`sagaz serve --preview` / `"preview": true`), no por call: "corré el agente entero en seco". Regla: class `read` por la cascada completa → passthrough (un agente ciego no planea); toda mutación y todo `unknown` → `status = 'dry'`, respuesta hablada (`isError: false`: el agente sigue planeando) y nunca reenviada. La política no corre en preview (nada se ejecuta, nada que aprobar): el veredicto se calcula, no se aplica, y viaja en `_meta.sagaz.wouldHave`. Los dry entran al hash chain como todo. Borde documentado: un `read` mal clasificado que muta SÍ se ejecuta — por eso `unknown` no se reenvía. `sagaz preview-report` agrupa los dry por clase y cuenta qué habría pasado.
 ✓ Checkpoint: reel en preview — reads reales, mutaciones habladas, `sagaz-toybox inspect` byte a byte igual al seed, `pending` vacío con un I en la sesión, cadena OK con dry; tests de reads/mutaciones/unknown/I-sin-pending/chain/mundo intacto/política-no-corre.
 
+## 6c. Tickets — Fase 2 (rollback determinístico)
+
+**Nota de scope:** la compensación semántica generada por LLM (tipo C) es Fase 3, post-lanzamiento. El lanzamiento sale con rollback determinístico impecable; en Fase 2 un efecto C se lista, no se compensa.
+
+**T10 — Capture hook + planes de undo**
+El proxy, al interceptar una call mutante cuyo tool tiene entrada en un compensation pack: (1) ejecuta la lectura de captura declarada por el pack ANTES de reenviar, guardando el resultado en `pre_state_json` (que entra al hash con el cierre del efecto, como ya congela T0); (2) tras el cierre exitoso del efecto, genera `undo_json` — el plan de inversa, derivado del pack + args + resultado + pre-estado — y marca `undo_status = 'planned'` (UPDATE de ciclo de vida, fuera de la cadena de hashes, como ya contempla T0 §3.5). Efectos sin pack quedan como hoy. Decisiones: la captura corre SIEMPRE que el pack exista — sin llave por-tool; una sola config global `"capture": false` desactiva todo. Si la lectura de captura falla, el efecto se ejecuta igual y queda `undo_status = 'none'` con el porqué registrado en el ledger (`undo_json` guarda el descriptor de no-plan con su razón) — la captura nunca bloquea la operación del agente: Sagaz observa y protege, no rompe.
+✓ Checkpoint: reel del toybox con un pack mínimo hardcodeado de prueba, mostrando `pre_state_json` poblado y los planes en `--json`.
+
+**T11 — Compensation packs**
+Formato declarativo JSON: matching de tool (exacto/glob + server opcional, misma sintaxis que `rules`), `capture` opcional (tool de lectura + mapeo de args con la sintaxis `$.args.x` de T0) e `inverse` (tool + mapeo de args desde `$.args`, `$.result`, `$.pre_state`). Loader desde `sagaz.config.json`: `"packs": [...]` inline o paths a archivos. El pack oficial del toybox vive como archivo en el repo: `create_contact → delete_contact` (inversa desde el resultado, sin captura), `delete_contact → create_contact` (pre-estado), `update_contact → update_contact` (pre-estado) — cubrir todos los R posibles del toybox, y documentar en el pack mismo por qué el resto NO tiene inversa: `send_email` (un "ignorá lo anterior" es compensación C, no inversa R), `transfer_funds` (I), y `delete_tweet` — el ejemplo didáctico de la frontera R/C: repostear el contenido crea un tweet con identidad nueva (otro id, otro timestamp, sin la historia del original), y **una inversa determinística necesita poder restaurar identidad, no solo contenido — si el mundo no lo permite, es C.** Precondición: el toybox extiende `create_contact` con `id` opcional (semántica de restore, documentada en su README) — sin eso, `delete_contact → create_contact` tendría exactamente el mismo problema de identidad que el tweet. Decisiones: un efecto CON plan de inversa derivable pasa a clasificarse **R** con `class_source = 'pack'` — acá se cierra el círculo del principio de T6/T7: R significa que sabemos ejecutar la inversa, y ahora la sabemos porque el pack la declara y el pre-estado está capturado. Precedencia: el pack clasifica por debajo de las reglas del usuario (SIEMPRE ganan) y por encima del resto de la cascada; el tope de `destructiveHint` no aplica a un R por pack — el tope existía justamente porque no conocíamos la inversa. Requiere la enmienda T0 §4d (valor `'pack'` en el CHECK de `class_source`; el hash no cambia).
+✓ Checkpoint: reel donde `delete_contact` ya no cae en `unknown` sino en R vía pack.
+
+**T12 — Checkpoint + rollback**
+`sagaz checkpoint [label]` (manual; el automático por sesión ya existe de facto vía `sessions` — cierra la pregunta abierta #3). `sagaz rollback [--to <checkpoint|id>] [--dry] [--session last]`: recorre los efectos en reversa desde el final hasta el checkpoint, y por cada uno: **R con plan** → ejecuta la inversa COMO NUEVO EFECTO en el ledger, linkeado vía `compensates_id` — jamás se toca la fila original: el undo es historia nueva (T0 §3.1); **C** → lo lista como "requiere tu decisión", sin ejecutar (Fase 3); **I** → lo lista como "sin vuelta atrás"; **`read`** → se salta. `--dry` muestra el plan completo (el anti-prompt) sin ejecutar nada. Decisiones: si una inversa falla, el rollback FRENA en ese punto y reporta — nunca sigue en silencio salteándose efectos. Antes de ejecutar cada inversa, verificación de estado: si el estado actual no coincide con el resultado registrado (alguien tocó después), avisa y exige `--force` para ese efecto — nunca pisa en silencio (la concurrencia de sagas de §8). El rollback corre desde la CLI y abre su PROPIA sesión en el ledger — única escritora de su propia cadena, la invariante de un-solo-escritor (T0 §4b.2) queda intacta; `compensates_id` cruza sesiones sin problema, y la restricción "la CLI no escribe en `effects`" (T0 §4c.5) era del canal de approvals, no una ley general.
+✓ Checkpoint: EL reel — seed → `sagaz checkpoint` → el agente crea, borra y rompe → `sagaz rollback --dry` muestra el plan → `sagaz rollback` → `sagaz-toybox inspect` byte a byte igual al estado del checkpoint para todo lo que el rollback declaró revertido, con los C/I listados explícitamente como no restaurados; el reel se diseña sobre el dominio R (el CRM) para que la vuelta sea total en cámara, y el ledger cuenta la ida Y la vuelta.
+
 ## 7. Distribución (es parte del producto, no un anexo)
 
 - **Build-in-public desde el commit 1**: el repo es el contenido. Devlog corto por fase.
-- **Lanzamiento formal en Fase 1** (preview + gate): Show HN + post técnico "There is no universal undo" presentando la taxonomía R/C/I y el effect ledger como conceptos. El objetivo del post es que la gente use NUESTRO vocabulario.
+- **Lanzamiento formal al completar T12** (decisión T9.5): el lanzamiento público se dispara al completar T12, no antes — sale con preview + gates + rollback determinístico. Show HN + post técnico "There is no universal undo" presentando la taxonomía R/C/I y el effect ledger como conceptos. El objetivo del post es que la gente use NUESTRO vocabulario.
 - **Reels**: el toybox existe para esto — demo de 30 segundos: agente rompe todo → rollback → todo vuelve. Formato multi-cut con hook.
 - **Cada incidente público de agentes** (van a seguir pasando) = ventana de contenido reactivo: "así se hubiera visto en el ledger".
 
@@ -184,7 +200,7 @@ Modo de sesión (`sagaz serve --preview` / `"preview": true`), no por call: "cor
 
 1. **Nombre definitivo.** "Sagaz" (saga pattern + sagaz; pronunciable en inglés) vs. alternativas más literales (undo-proxy, ledgr, rewindr). Criterio: googleable, npm libre, dominio disponible.
 2. ~~¿El ledger registra también los `tools/list` y lecturas, o solo mutaciones?~~ **Respondida (T0): se registra todo**, lecturas incluidas (`class = 'read'`); costo marginal bajo y es el expediente vivo del Acto 2. El ruido se maneja con filtros en la CLI.
-3. ¿Checkpoint manual solamente (CLI) o también automático por sesión/turno? *(Propuesta T0, sin cerrar: automático por sesión + manual por CLI; el schema ya lo contempla con `checkpoints.auto`.)*
+3. ~~¿Checkpoint manual solamente (CLI) o también automático por sesión/turno?~~ **Respondida (T9.5/T12): automático por sesión** (de facto vía `sessions`) **+ manual por CLI** (`sagaz checkpoint [label]`; el schema ya lo contemplaba con `checkpoints.auto`).
 4. ~~Formato de los "compensation packs": ¿JSON declarativo, TS plugins, o ambos?~~ **Respondida (T0): JSON declarativo primero, TS plugins después.** El formato de `undo_json` (inversa + capture hook) es la base.
 5. ¿Cómo convive con el rewind nativo de Claude Code sin confundir al usuario? Resuelta en espíritu por la frase de posicionamiento ("un solo undo para todo lo que tu agente tocó — incluido lo que ningún snapshot alcanza"); queda abierta la ejecución concreta del mensaje.
 
