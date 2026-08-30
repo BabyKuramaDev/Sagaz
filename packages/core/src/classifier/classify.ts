@@ -13,7 +13,7 @@
  * nothing about whether an inverse is known). It acts as a cap: whatever the heuristics say,
  * the result can never be R. (Settled at the T7 checkpoint under the "R = known inverse" rule.)
  *
- * In Phase 1 the classifier only annotates — it never blocks. Gates are a separate ticket.
+ * The classifier only annotates — it never blocks. What happens next is policy/ (gates).
  */
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { ClassificationRule } from "../config.js";

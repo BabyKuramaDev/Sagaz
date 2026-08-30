@@ -1,7 +1,7 @@
 /**
- * @sagaz/core — MCP proxy + effect ledger.
+ * sagaz-core — MCP proxy + effect ledger.
  *
- * Transparent pass-through proxy + R/C/I classifier (levels 1–3) + effect ledger v1.
+ * Transparent pass-through proxy + R/C/I classifier (levels 1–3) + policy gates + effect ledger v1.
  */
 
 import { createRequire } from "node:module";
@@ -11,15 +11,21 @@ export const CORE_VERSION: string = (createRequire(import.meta.url)("../package.
 
 export {
   ConfigError,
+  DEFAULT_CLASS_POLICY,
   DEFAULT_CONFIG_PATH,
+  DEFAULT_CONFIRM_TIMEOUT_MS,
   PREFIX_SEPARATOR,
   loadConfig,
   parseConfig,
   type ClassificationRule,
   type LedgerConfig,
+  type PolicyAction,
+  type PolicyConfig,
+  type PolicyToolRule,
   type SagazConfig,
   type ServerConfig,
 } from "./config.js";
 export * from "./classifier/index.js";
 export * from "./ledger/index.js";
+export * from "./policy/index.js";
 export { PROXY_NAME, SagazProxy, ToolCollisionError, buildRoutes, exposedName, type ProxyOptions } from "./proxy.js";

@@ -1,4 +1,4 @@
-# @sagaz/core
+# sagaz-core
 
 The proxy and the effect ledger behind the [`sagaz`](../cli) CLI. You normally do not import this package; it documents the two contracts users interact with through `sagaz.config.json`: **classification** (this file) and the **ledger hash chain** (`src/ledger/hash.ts`).
 
@@ -62,3 +62,76 @@ Source: `src/classifier/heuristics.ts`. Keep this table and that file in sync.
 - First matching rule in file order wins.
 
 Rules are not retroactive: effects already in the ledger keep the class they were sealed with.
+
+## Gates: what happens once a call has a class
+
+The classifier annotates; the **policy** decides. Every `tools/call` goes classify → evaluate policy → record → gate:
+
+| Action | What Sagaz does |
+|---|---|
+| `allow` | forwards the call as usual |
+| `confirm` | records the attempt, **holds the call** until you run `sagaz approve <id>` or `sagaz deny <id>` (or `policy.confirmTimeoutMs` elapses, which counts as deny), then follows the decision |
+| `block` | records the attempt and answers the agent without ever forwarding the call |
+
+A blocked or denied attempt closes as `status = 'blocked'` in the ledger — hashed and chained like any other effect. A stopped call is auditable history; that is the point.
+
+### The factory policy: the guardian
+
+Without any configuration, **`I` → `confirm`** and everything else (`read`, `R`, `C`, `unknown`) → `allow`. Irreversible calls wait for a human; the rest flows and is only recorded.
+
+### Your policy
+
+```json
+{
+  "servers": { "crm": { "command": "..." }, "bank": { "command": "..." } },
+  "policy": {
+    "class": { "I": "block", "unknown": "confirm" },
+    "tools": [
+      { "tool": "transfer_funds", "server": "bank", "action": "confirm", "reason": "payroll runs need a human" },
+      { "tool": "send_*", "action": "confirm" }
+    ],
+    "confirmTimeoutMs": 120000
+  }
+}
+```
+
+Precedence, first hit wins:
+
+1. **`tools`** — same matching as classification rules: exact tool name or glob (`*`), optional `server`, file order. A tool rule beats the class map.
+2. **`class`** — per class; your entries override the factory map key by key (`{ "I": "allow" }` switches the guardian off and leaves the rest alone).
+3. the factory map above.
+
+`reason` (optional) is stored as the gate reason and shown to the agent; it defaults to a description of the rule.
+
+Approvals travel through the ledger (`approvals` table — `docs/T0-recon-y-schema.md` §4c): the proxy holds the call and polls, `sagaz approve` / `sagaz deny` write the decision from any other terminal. The agent never sees the wait — an approved call returns exactly what the downstream returned.
+
+### What the agent sees
+
+A gate speaks; it does not moo. Every stopped call comes back as a tool result with **`isError: true`** (the action did *not* happen, and the model must know it) and a text written to be read by an LLM: what was stopped, why (class + policy), that it must not retry, that the operator knows, and what it can do instead. The gate metadata (`gate`, `class`, `policy`, `approvalId`, `decidedBy`, `waitedMs`) travels in `_meta.sagaz`, so `result_json` in the ledger is exactly what the agent received. Source: `src/policy/templates.ts`. (A fourth outcome, `cancelled`, closes the row when the agent cancels or disconnects while held — nobody reads that reply, and a later `sagaz approve` is refused.)
+
+**Blocked by policy**
+
+```
+Sagaz blocked this call before it reached the server. `transfer_funds` on server "bank" was NOT executed and nothing changed.
+Reason: this tool is classified I (irreversible); policy.class I → block.
+Do not retry this call and do not try to achieve the same effect another way — the policy will block it again.
+The attempt is recorded in the Sagaz effect ledger for the operator to see. You may continue with other tasks that do not depend on this action, or report this to the user.
+```
+
+**Held, then denied by the operator**
+
+```
+Sagaz held this call for operator confirmation and the operator (jero) denied it. `transfer_funds` on server "bank" was NOT executed and nothing changed.
+Reason: this tool is classified I (irreversible); default policy: class I → confirm.
+Do not retry this call and do not try to achieve the same effect another way — it was explicitly denied.
+The operator already knows about this attempt; it is recorded in the Sagaz effect ledger. You may continue with other tasks that do not depend on this action, or report this to the user.
+```
+
+**Held, then nobody answered in time**
+
+```
+Sagaz held this call for operator confirmation and no decision arrived within 120s, so it is treated as denied. `transfer_funds` on server "bank" was NOT executed and nothing changed.
+Reason: this tool is classified I (irreversible); default policy: class I → confirm.
+Do not retry this call — a retry would wait again and the policy is unchanged.
+The attempt is recorded in the Sagaz effect ledger for the operator to see. You may continue with other tasks that do not depend on this action, or report this to the user.
+```

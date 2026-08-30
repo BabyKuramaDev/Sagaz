@@ -1,4 +1,4 @@
-import { Ledger, LedgerNotFoundError, loadConfig, type SessionRow } from "@sagaz/core";
+import { Ledger, LedgerNotFoundError, loadConfig, type SessionRow } from "sagaz-core";
 import { UsageError } from "../args.js";
 import type { Style } from "../format.js";
 
@@ -43,4 +43,10 @@ export function clientLabel(clientInfo: string | null): string {
   if (!clientInfo) return "-";
   const c = JSON.parse(clientInfo) as { name?: string; version?: string };
   return c.name ? `${c.name} ${c.version ?? ""}`.trimEnd() : "-";
+}
+
+/** For `approve` / `deny`: writes the approvals table only, never creates a ledger. */
+export async function openWritableLedger(configPath: string): Promise<Ledger> {
+  const config = await loadConfig(configPath);
+  return new Ledger(config.ledger.path, { mustExist: true });
 }

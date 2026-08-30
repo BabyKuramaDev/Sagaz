@@ -1,4 +1,4 @@
-import { Ledger, LedgerNotFoundError, loadConfig } from "@sagaz/core";
+import { Ledger, LedgerNotFoundError, loadConfig } from "sagaz-core";
 import type { Parsed } from "../args.js";
 import { formatTime, table } from "../format.js";
 import { clientLabel, positiveInt, type CommandIO } from "./context.js";
@@ -28,7 +28,11 @@ export async function statusCommand(parsed: Parsed, configPath: string, io: Comm
     const summaries = ledger.listSessionSummaries();
     const effects = summaries.reduce((n, s) => n + s.effects, 0);
     const pending = summaries.reduce((n, s) => n + s.pending, 0);
-    io.out(`  state    ${summaries.length} session(s), ${effects} effect(s)${pending ? `, ${style.yellow(`${pending} pending`)}` : ""}`);
+    const held = ledger.listPendingApprovals().length;
+    io.out(
+      `  state    ${summaries.length} session(s), ${effects} effect(s)${pending ? `, ${style.yellow(`${pending} pending`)}` : ""}` +
+        (held ? `, ${style.yellow(`${held} waiting for approval`)} ${style.dim("(sagaz pending)")}` : ""),
+    );
     if (summaries.length === 0) return 0;
 
     const n = positiveInt("last", parsed.flags["last"], DEFAULT_LAST);

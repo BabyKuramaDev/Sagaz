@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@sagaz/core": "workspace:*"
+    "sagaz-core": "workspace:*"
   },
   "devDependencies": {
     "better-sqlite3": "^12.11.1",

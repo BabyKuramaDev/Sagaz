@@ -1,5 +1,5 @@
 {
-  "name": "@sagaz/toybox",
+  "name": "sagaz-toybox",
   "version": "0.0.0",
   "description": "Sagaz toybox — a deliberately dangerous MCP server simulating an external world (CRM, email, tweets, bank)",
   "license": "MIT",

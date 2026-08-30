@@ -144,7 +144,7 @@ Persistir cada `tools/call` + resultado en SQLite según schema de T0, con hash 
 ✓ Checkpoint: el GIF del README se graba con esto. **Fin de Fase 0 = primer contenido build-in-public (sin lanzamiento formal, "estoy construyendo esto").**
 
 **T6 — Auditoría de salida al mundo** — **hecho**
-El repo se hace público al final de Fase 1. Auditoría como dev escéptico (README, legibilidad, higiene, docs) → informe → aplicar solo lo aprobado. Decisión de nombre: marca Sagaz, CLI publicada como `sagaz-mcp` (bin `sagaz`), `@sagaz/core`, `@sagaz/toybox`.
+El repo se hace público al final de Fase 1. Auditoría como dev escéptico (README, legibilidad, higiene, docs) → informe → aplicar solo lo aprobado. Decisión de nombre: marca Sagaz, CLI publicada como `sagaz-mcp` (bin `sagaz`), `sagaz-core`, `sagaz-toybox` (familia sin scope: la org `sagaz` en npm no estaba disponible).
 
 ## 6b. Tickets — Fase 1
 

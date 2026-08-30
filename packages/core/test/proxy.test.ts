@@ -12,8 +12,13 @@ import { SagazProxy, ToolCollisionError, buildRoutes } from "../src/proxy.js";
 import { parseConfig, type SagazConfig, type ServerConfig } from "../src/config.js";
 import { Ledger } from "../src/ledger/index.js";
 
-/** Build a config the way loadConfig would (defaults applied). */
-const cfgOf = (servers: Record<string, ServerConfig>): SagazConfig => parseConfig({ servers });
+/**
+ * Build a config the way loadConfig would (defaults applied), with the guardian gate switched off:
+ * these tests exercise routing and classification, and the toybox reel moves money. Gates have
+ * their own describe below.
+ */
+const NO_GATES = { class: { I: "allow" } };
+const cfgOf = (servers: Record<string, ServerConfig>): SagazConfig => parseConfig({ servers, policy: NO_GATES });
 
 const TOYBOX_BIN = fileURLToPath(new URL("../../toybox/dist/index.js", import.meta.url));
 if (!existsSync(TOYBOX_BIN)) throw new Error(`toybox not built (${TOYBOX_BIN}). Run \`pnpm build\` before \`pnpm test\`.`);
@@ -103,7 +108,7 @@ describe("SagazProxy over a real toybox (stdio downstream)", () => {
     const db = join(dir, "world.db");
     toyboxCli(db, "seed");
     const ledger = new Ledger(join(dir, "ledger.db"));
-    const config = parseConfig({ servers: { toybox: toybox(db) }, rules: [{ tool: "list_inbox", class: "unknown", reason: "user says so" }] });
+    const config = parseConfig({ servers: { toybox: toybox(db) }, rules: [{ tool: "list_inbox", class: "unknown", reason: "user says so" }], policy: NO_GATES });
     const proxy = new SagazProxy(config, { log: () => {}, ledger });
     await proxy.start();
     expect(proxy.currentSessionId).toBeUndefined();
@@ -208,5 +213,180 @@ describe("sagaz bin end to end (stdio both sides)", () => {
     });
     expect(code).toBe(1);
     expect(stderr).toMatch(/Tool name collision[\s\S]*"prefix": "two"/);
+  });
+});
+
+describe("gates over a real toybox", () => {
+  const balance = (dump: string, acc: string) => (dump.match(new RegExp(`${acc}\\s+\\S.*?\\s+(\\$[\\d,]+\\.\\d\\d)`)) ?? [])[1];
+  const transfer = { from_account: "acc-payroll", to_account: "acc-vendor", amount_cents: 250_000 };
+  const gateMeta = (r: CallToolResult) => (r._meta as { sagaz: Record<string, unknown> }).sagaz;
+
+  async function setup(policy: unknown, approvalPollMs = 10) {
+    const db = join(dir, "world.db");
+    toyboxCli(db, "seed");
+    const ledgerPath = join(dir, "ledger.db");
+    const ledger = new Ledger(ledgerPath);
+    const proxy = new SagazProxy(parseConfig({ servers: { toybox: toybox(db) }, policy }), { log: () => {}, ledger, approvalPollMs });
+    await proxy.start();
+    const client = await connectClient(proxy);
+    const operator = new Ledger(ledgerPath); // stands in for the `sagaz approve` process
+    const close = async () => {
+      await client.close();
+      await proxy.close();
+      operator.close();
+      ledger.close();
+    };
+    return { db, ledger, proxy, client, operator, close };
+  }
+
+  it("guardian default: transfer_funds (I) is held; `approve` lets it through and the agent never notices", async () => {
+    const t = await setup(undefined);
+    try {
+      const call = t.client.callTool({ name: "transfer_funds", arguments: transfer }) as Promise<CallToolResult>;
+      // The call is parked: the effect is pending and `sagaz pending` would list it.
+      let pending = t.operator.listPendingApprovals();
+      for (let i = 0; i < 100 && pending.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        pending = t.operator.listPendingApprovals();
+      }
+      expect(pending).toMatchObject([{ tool: "transfer_funds", server: "toybox", class: "I" }]);
+      expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$0.00");
+
+      t.operator.decide(pending[0]!.id, "allow", "jero");
+      const result = await call;
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse(text(result)).amount_cents).toBe(250_000);
+      expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$2,500.00");
+
+      const rows = t.ledger.listEffects(t.proxy.currentSessionId as string);
+      expect(rows.map((r) => [r.tool, r.class, r.status])).toEqual([["transfer_funds", "I", "ok"]]);
+      expect(t.operator.listPendingApprovals()).toEqual([]);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("`deny` answers the denied template, records 'blocked' in the chain and the world is untouched", async () => {
+    const t = await setup(undefined);
+    try {
+      const call = t.client.callTool({ name: "transfer_funds", arguments: transfer }) as Promise<CallToolResult>;
+      let pending = t.operator.listPendingApprovals();
+      for (let i = 0; i < 100 && pending.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        pending = t.operator.listPendingApprovals();
+      }
+      t.operator.decide(pending[0]!.id, "deny", "jero");
+      const result = await call;
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("the operator (jero) denied it");
+      expect(text(result)).toContain('`transfer_funds` on server "toybox" was NOT executed');
+      expect(gateMeta(result)).toMatchObject({ gate: "denied", class: "I", decidedBy: "jero", policy: "default policy: class I → confirm" });
+      expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$0.00");
+      expect(toyboxCli(t.db, "inspect")).toContain("TRANSFERS (0)");
+
+      // A read afterwards still flows, and the blocked row is part of the verified chain.
+      await t.client.callTool({ name: "list_accounts", arguments: {} });
+      const sid = t.proxy.currentSessionId as string;
+      const rows = t.ledger.listEffects(sid);
+      expect(rows.map((r) => [r.tool, r.status])).toEqual([["transfer_funds", "blocked"], ["list_accounts", "ok"]]);
+      expect(JSON.parse(rows[0]!.result_json ?? "")).toMatchObject({ isError: true, _meta: { sagaz: { gate: "denied" } } });
+      expect(t.ledger.verifySession(sid)).toMatchObject({ ok: true });
+      expect(t.ledger.verifySession(sid).chain).toHaveLength(2);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("timeout → denied: the agent gets the timeout template and nothing moved", async () => {
+    const t = await setup({ confirmTimeoutMs: 60 });
+    try {
+      const result = (await t.client.callTool({ name: "transfer_funds", arguments: transfer })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      expect(text(result)).toMatch(/no decision arrived within \d+ms, so it is treated as denied/);
+      expect(gateMeta(result)).toMatchObject({ gate: "timeout", decidedBy: "timeout" });
+      expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$0.00");
+      expect(t.operator.listPendingApprovals()).toEqual([]);
+      const sid = t.proxy.currentSessionId as string;
+      expect(t.ledger.listEffects(sid).map((r) => r.status)).toEqual(["blocked"]);
+      expect(t.ledger.verifySession(sid)).toMatchObject({ ok: true });
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("agent cancels while held → closed as blocked/cancelled, and a later approve is refused (nothing runs)", async () => {
+    const t = await setup(undefined);
+    try {
+      const controller = new AbortController();
+      const call = t.client.callTool({ name: "transfer_funds", arguments: transfer }, undefined, { signal: controller.signal });
+      let pending = t.operator.listPendingApprovals();
+      for (let i = 0; i < 100 && pending.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        pending = t.operator.listPendingApprovals();
+      }
+      expect(pending).toHaveLength(1);
+      controller.abort();
+      await expect(call).rejects.toThrow();
+
+      const sid = t.proxy.currentSessionId as string;
+      let rows = t.ledger.listEffects(sid);
+      for (let i = 0; i < 100 && rows[0]?.status === "pending"; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        rows = t.ledger.listEffects(sid);
+      }
+      expect(rows.map((r) => r.status)).toEqual(["blocked"]);
+      expect(JSON.parse(rows[0]!.result_json ?? "")).toMatchObject({ _meta: { sagaz: { gate: "cancelled", decidedBy: "cancelled" } } });
+      expect(t.operator.listPendingApprovals()).toEqual([]);
+      expect(() => t.operator.decide(pending[0]!.id, "allow", "jero")).toThrow(/Already decided: deny by cancelled/);
+      expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$0.00");
+      expect(t.ledger.verifySession(sid)).toMatchObject({ ok: true });
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("block: never reaches the downstream, no approval is opened, a tool rule beats the class map", async () => {
+    const t = await setup({ class: { I: "allow", C: "allow" }, tools: [{ tool: "transfer_*", server: "toybox", action: "block", reason: "no money moves from a bot" }, { tool: "send_email", action: "confirm" }] });
+    try {
+      const result = (await t.client.callTool({ name: "transfer_funds", arguments: transfer })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("Sagaz blocked this call before it reached the server");
+      expect(text(result)).toContain("classified I (irreversible); no money moves from a bot");
+      expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$0.00");
+      expect(t.operator.listPendingApprovals()).toEqual([]);
+
+      // send_email is C (allowed by class) but the tool rule says confirm → it is held.
+      const call = t.client.callTool({ name: "send_email", arguments: { to: "ada@analytical.engine", subject: "s", body: "b" } }) as Promise<CallToolResult>;
+      let pending = t.operator.listPendingApprovals();
+      for (let i = 0; i < 100 && pending.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        pending = t.operator.listPendingApprovals();
+      }
+      expect(pending.map((p) => p.tool)).toEqual(["send_email"]);
+      t.operator.decide(pending[0]!.id, "allow", "jero");
+      expect((await call).isError).toBeFalsy();
+
+      const rows = t.ledger.listEffects(t.proxy.currentSessionId as string);
+      expect(rows.map((r) => [r.tool, r.status])).toEqual([["transfer_funds", "blocked"], ["send_email", "ok"]]);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("confirm without a ledger cannot degrade into allow: it blocks", async () => {
+    const db = join(dir, "world.db");
+    toyboxCli(db, "seed");
+    const proxy = new SagazProxy(parseConfig({ servers: { toybox: toybox(db) } }), { log: () => {} });
+    await proxy.start();
+    const client = await connectClient(proxy);
+    try {
+      const result = (await client.callTool({ name: "transfer_funds", arguments: transfer })) as CallToolResult;
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("Sagaz blocked this call");
+      expect(balance(toyboxCli(db, "inspect"), "acc-vendor")).toBe("$0.00");
+    } finally {
+      await client.close();
+      await proxy.close();
+    }
   });
 });
