@@ -28,4 +28,5 @@ export {
 export * from "./classifier/index.js";
 export * from "./ledger/index.js";
 export * from "./policy/index.js";
-export { PROXY_NAME, SagazProxy, ToolCollisionError, buildRoutes, exposedName, type ProxyOptions } from "./proxy.js";
+export * from "./undo/index.js";
+export { DEFAULT_CAPTURE_TIMEOUT_MS, PROXY_NAME, SagazProxy, ToolCollisionError, buildRoutes, exposedName, type ProxyOptions } from "./proxy.js";

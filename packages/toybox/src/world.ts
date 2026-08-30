@@ -117,7 +117,8 @@ export class World {
     return this.db.prepare("SELECT * FROM contacts ORDER BY id").all() as Contact[];
   }
 
-  createContact(input: { name: string; email: string; company?: string | undefined }): Contact {
+  /** `company` accepts null as "no company" so an inverse derived from a pre-state can express it. */
+  createContact(input: { name: string; email: string; company?: string | null | undefined }): Contact {
     const existing = this.db.prepare("SELECT id FROM contacts WHERE email = ?").get(input.email);
     if (existing) throw new WorldError(`A contact with email ${input.email} already exists`);
     const info = this.db
@@ -150,7 +151,7 @@ export class World {
     return contact;
   }
 
-  private getContact(id: number): Contact {
+  getContact(id: number): Contact {
     const row = this.db.prepare("SELECT * FROM contacts WHERE id = ?").get(id) as Contact | undefined;
     if (!row) throw new WorldError(`Contact ${id} not found`);
     return row;

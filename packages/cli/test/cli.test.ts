@@ -301,3 +301,49 @@ describe("sagaz preview-report / ledger on a dry session", () => {
     expect(sagaz("ledger", "--status", "ok").out).not.toMatch(/preview/);
   });
 });
+
+describe("sagaz ledger undo column / status dry counts (T10)", () => {
+  /** One planned inverse, one no-plan with its reason, one dry row. */
+  beforeEach(() => {
+    const ledger = new Ledger(join(dir, "ledger.db"), { clock });
+    const s = ledger.openSession({ clientInfo: { name: "claude-code", version: "2.0.0" } });
+    const planned = ledger.begin({ sessionId: s.id, server: "toybox", tool: "create_contact", args: { name: "Ada" }, classification: { class: "R", source: "rule", reason: "create_*" } });
+    ledger.end(planned, { status: "ok", result: { content: [{ type: "text", text: '{"id":4}' }] } });
+    ledger.setUndo(planned, { undoStatus: "planned", undoJson: { kind: "tool_call", server: "toybox", tool: "delete_contact", args: { id: 4 } } });
+    const noPlan = ledger.begin({ sessionId: s.id, server: "toybox", tool: "delete_contact", args: { id: 1 } });
+    ledger.end(noPlan, { status: "ok", result: { content: [] } });
+    ledger.setUndo(noPlan, { undoStatus: "none", undoJson: { kind: "no_plan", reason: "capture read get_contact failed: gone" } });
+    const dry = ledger.begin({ sessionId: s.id, server: "toybox", tool: "post_tweet", args: { text: "hi" }, classification: { class: "C", source: "rule", reason: "post_*" } });
+    ledger.end(dry, { status: "dry", result: { content: [] } });
+    const failed = ledger.begin({ sessionId: s.id, server: "toybox", tool: "update_contact", args: { id: 2 } });
+    ledger.end(failed, { status: "ok", result: { content: [] } });
+    ledger.setUndo(failed, { undoStatus: "failed", undoJson: { kind: "tool_call", server: "toybox", tool: "update_contact", args: { id: 2 } } });
+    ledger.close();
+  });
+
+  it("shows the undo column only when a pack had something to say: the plan status, or a dim no-plan", () => {
+    const out = sagaz("ledger").out;
+    expect(out).toMatch(/result\s+id\s+undo/);
+    expect(out).toMatch(/create_contact[^\n]*\bplanned\b/);
+    expect(out).toMatch(/delete_contact[^\n]*\bno plan\b/);
+    // Lifecycle colours: planned is green, a failed undo must never look green.
+    const colour = spawnSync(process.execPath, [bin, "--config", configPath, "ledger"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "", FORCE_COLOR: "1" } }).stdout;
+    expect(colour).toContain("\x1b[32mplanned\x1b[39m");
+    expect(colour).toContain("\x1b[31mfailed\x1b[39m");
+    // --json carries the plan and the no-plan descriptor in full.
+    const rows = sagaz("ledger", "--json").out.trim().split("\n").map((l) => JSON.parse(l) as { undo_json: string | null; undo_status: string });
+    expect(JSON.parse(rows[0]!.undo_json ?? "")).toEqual({ kind: "tool_call", server: "toybox", tool: "delete_contact", args: { id: 4 } });
+    expect(rows[0]!.undo_status).toBe("planned");
+    expect(JSON.parse(rows[1]!.undo_json ?? "")).toEqual({ kind: "no_plan", reason: "capture read get_contact failed: gone" });
+    // A ledger with no undo activity keeps the narrow table.
+    rmSync(join(dir, "ledger.db"));
+    seedLedger();
+    expect(sagaz("ledger").out).not.toMatch(/undo/);
+  });
+
+  it("status counts dry effects in the state line and per session", () => {
+    const out = sagaz("status").out;
+    expect(out).toContain("1 session(s), 4 effect(s), 1 dry");
+    expect(out).toMatch(/claude-code 2\.0\.0\s+4 \(1 dry\)/);
+  });
+});

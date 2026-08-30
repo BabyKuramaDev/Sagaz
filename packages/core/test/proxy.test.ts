@@ -186,8 +186,8 @@ describe("sagaz bin end to end (stdio both sides)", () => {
     try {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual([
-        "create_contact", "delete_contact", "delete_tweet", "list_accounts", "list_contacts", "list_inbox",
-        "list_timeline", "post_tweet", "send_email", "transfer_funds", "update_contact",
+        "create_contact", "delete_contact", "delete_tweet", "get_contact", "list_accounts", "list_contacts",
+        "list_inbox", "list_timeline", "post_tweet", "send_email", "transfer_funds", "update_contact",
       ]);
     } finally {
       await client.close();
