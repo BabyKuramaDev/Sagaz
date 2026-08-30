@@ -519,6 +519,15 @@ describe("preview over a real toybox (sagaz serve --preview)", () => {
       expect(tweeted._meta).toBeUndefined();
       expect(toyboxCli(t.db, "inspect")).toContain("oops");
       expect(toyboxCli(t.db, "inspect")).toContain("TRANSFERS (0)");
+      // The annotation path of the same edge: delete_contact carries destructiveHint (not readOnlyHint),
+      // so the annotation level does not make it a read and it stays dry; list_inbox's readOnlyHint does.
+      const deleted = (await t.client.callTool({ name: "delete_contact", arguments: { id: 1 } })) as CallToolResult;
+      expect(meta(deleted)).toMatchObject({ preview: true, class: "unknown" });
+      const inbox = (await t.client.callTool({ name: "list_inbox", arguments: {} })) as CallToolResult;
+      expect(inbox._meta).toBeUndefined();
+      expect(t.ledger.listEffects(t.proxy.currentSessionId as string).map((r) => [r.tool, r.class_source, r.status])).toEqual([
+        ["transfer_funds", "rule", "dry"], ["post_tweet", "user", "ok"], ["delete_contact", "rule", "dry"], ["list_inbox", "annotation", "ok"],
+      ]);
     } finally {
       await t.close();
     }

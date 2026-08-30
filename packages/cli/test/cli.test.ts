@@ -256,14 +256,35 @@ describe("sagaz preview-report / ledger on a dry session", () => {
   });
 
   it("preview-report --json, and honest messages for sessions that did not run dry", () => {
-    const json = JSON.parse(seedDry() && sagaz("preview-report", "--json").out) as { reads: number; dry: unknown[]; groups: { class: string; count: number }[] };
+    seedDry();
+    const json = JSON.parse(sagaz("preview-report", "--json").out) as { reads: number; dry: unknown[]; groups: { class: string; count: number }[] };
     expect(json.reads).toBe(2);
     expect(json.dry).toHaveLength(4);
     expect(json.groups.map((g) => [g.class, g.count])).toEqual([["I", 1], ["C", 2], ["unknown", 1]]);
 
+    // verify from the CLI: dry rows are part of the chain.
+    expect(sagaz("verify").out).toContain("OK 6 effect(s) chained");
+
     seedLedger();
     expect(sagaz("preview-report").out).toContain("nothing ran dry in this session — was it started with `sagaz serve --preview`?");
     expect(sagaz("preview-report", "--session", "nope")).toMatchObject({ code: 1, err: expect.stringMatching(/No session matches "nope"/) });
+  });
+
+  it("a mixed session is not sold as clean, and a dry row without metadata is shown honestly", () => {
+    const ledger = new Ledger(join(dir, "ledger.db"), { clock });
+    const s = ledger.openSession({});
+    const ran = ledger.begin({ sessionId: s.id, server: "toybox", tool: "post_tweet", args: {}, classification: { class: "C", source: "rule", reason: "t" } });
+    ledger.end(ran, { status: "ok", result: {} });
+    const bare = ledger.begin({ sessionId: s.id, server: "toybox", tool: "send_email", args: {}, classification: { class: "C", source: "rule", reason: "t" } });
+    ledger.end(bare, { status: "dry", result: { content: [] } });
+    const failedRead = ledger.begin({ sessionId: s.id, server: "toybox", tool: "list_inbox", args: {}, classification: { class: "read", source: "annotation", reason: "t" } });
+    ledger.end(failedRead, { status: "error", result: {} });
+    ledger.close();
+    const out = sagaz("preview-report").out;
+    expect(out).toContain("2 non-read call(s) DID reach the world — not a clean preview. 3 call(s): 0 read(s) executed, 1 recorded dry.");
+    expect(out).toMatch(/C\s+1\s+send_email\n\s+compensable.*; it carried no policy verdict/);
+    expect(out).toMatch(/2\s+send_email\s+toybox\s+C\s+-\n/);
+    expect(sagaz("ledger").out).toMatch(/dry\s+150ms\s+\d+B\s+\S+\s+not executed — -/);
   });
 
   it("ledger marks dry rows and shows the preview column only when something ran dry", () => {

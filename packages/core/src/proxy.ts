@@ -31,7 +31,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { PREFIX_SEPARATOR, type SagazConfig, type ServerConfig } from "./config.js";
 import { classify, type Classification } from "./classifier/index.js";
-import { configHash, type Ledger } from "./ledger/index.js";
+import { configHash, type EffectStatus, type Ledger } from "./ledger/index.js";
 import { PREVIEW_INSTRUCTIONS, evaluatePolicy, gateResult, previewResult, type GateOutcome, type PolicyVerdict } from "./policy/index.js";
 
 export const PROXY_NAME = "sagaz";
@@ -214,7 +214,7 @@ export class SagazProxy {
    * Ledger write policy: a failure to record never changes what the client sees. The call
    * already happened (or failed) downstream; we log loudly and return the real outcome.
    */
-  private record(effectId: string | undefined, input: { status: "ok" | "error" | "blocked" | "dry"; result: unknown }): void {
+  private record(effectId: string | undefined, input: { status: Exclude<EffectStatus, "pending">; result: unknown }): void {
     if (effectId === undefined || !this.ledger) return;
     try {
       this.ledger.end(effectId, input);

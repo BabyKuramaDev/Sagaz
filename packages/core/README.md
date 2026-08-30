@@ -145,7 +145,7 @@ The attempt is recorded in the Sagaz effect ledger for the operator to see. You 
 | `read` | forwarded as usual — the agent must be able to see the world to plan anything |
 | `R`, `C`, `I`, `unknown` | classified, recorded as `status = 'dry'`, answered with the note below, **never forwarded** |
 
-The policy does not run in preview: nothing executes, so there is nothing to confirm or block, and an `I` call closes as `dry` — never `pending`, never waiting. The verdict is still *computed* and travels with the reply as `_meta.sagaz.wouldHave` (`allow` | `confirm` | `block`) plus its reason, so `sagaz preview-report` can say "would have waited for your approval". Dry rows are hashed and chained like any other effect.
+The policy is evaluated but not applied in preview: nothing executes, so there is nothing to confirm or block, and an `I` call closes as `dry` — never `pending`, never waiting. The verdict travels with the reply as `_meta.sagaz.wouldHave` (`allow` | `confirm` | `block`) and its reason as `_meta.sagaz.policy`, so `sagaz preview-report` can say "would have waited for your approval". Dry rows are hashed and chained like any other effect.
 
 **The honest edge.** "Read" is whatever the cascade says: a mutating tool that declares `readOnlyHint: true`, or one your rules misclassify as `read`, *is* forwarded in preview. Sagaz cannot know better than its classifier. That is exactly why `unknown` is treated as a mutation: when in doubt, dry.
 

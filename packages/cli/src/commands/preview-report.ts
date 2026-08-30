@@ -25,10 +25,10 @@ export async function previewReportCommand(parsed: Parsed, configPath: string, i
       io.out(style.dim(rows.length === 0 ? "no effects in this session" : "nothing ran dry in this session — was it started with `sagaz serve --preview`?"));
       return 0;
     }
-    io.out(
-      `Nothing reached the world. ${rows.length} call(s): ${report.reads} read(s) executed, ${style.magenta(`${report.dry.length} recorded dry`)}` +
-        (report.other ? style.dim(` (${report.other} other)`) : "") + ".",
-    );
+    // The headline must be true: a session with dry rows AND executed mutations (a mis-read tool,
+    // a mixed ledger) is not a clean preview, and the report says so instead of pretending.
+    const headline = report.other === 0 ? "Nothing reached the world." : style.red(`${report.other} non-read call(s) DID reach the world — not a clean preview.`);
+    io.out(`${headline} ${rows.length} call(s): ${report.reads} read(s) executed, ${style.magenta(`${report.dry.length} recorded dry`)}.`);
     io.out("");
     io.out(style.bold("what would have happened"));
     for (const g of report.groups) {
@@ -70,8 +70,9 @@ export interface PreviewGroup {
 }
 
 export interface PreviewReport {
+  /** Reads that actually ran (`class = 'read'`, `status = 'ok'`). */
   reads: number;
-  /** Effects that are neither reads nor dry (ok/error/blocked/pending): a mixed or non-preview session. */
+  /** Everything that is neither an executed read nor dry (mutations that ran, errors, blocked, pending): a mixed or non-preview session. */
   other: number;
   dry: DryEffect[];
   groups: PreviewGroup[];
@@ -94,9 +95,10 @@ export function buildPreviewReport(rows: EffectRow[]): PreviewReport {
   const dry: DryEffect[] = [];
   for (const r of rows) {
     if (r.status === "dry") {
-      const cls = (r.class === "R" || r.class === "C" || r.class === "I" ? r.class : "unknown") as DryClass;
+      // The proxy never writes a dry read; anything else without a class is reported as unknown, honestly.
+      const cls: DryClass = r.class === "R" || r.class === "C" || r.class === "I" ? r.class : "unknown";
       dry.push({ seq: r.seq, tool: r.tool, server: r.server, class: cls, wouldHave: previewMeta(r)?.wouldHave ?? null, args_json: r.args_json });
-    } else if (r.class === "read") reads++;
+    } else if (r.class === "read" && r.status === "ok") reads++;
     else other++;
   }
   const groups: PreviewGroup[] = [];

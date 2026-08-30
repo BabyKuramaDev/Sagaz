@@ -8,7 +8,7 @@ The goal: one undo for everything your agent touched — including what no snaps
 
 ## Status
 
-Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and **Phase 1 is in progress**: every call is classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Since T8 Sagaz also *gates*: by default an irreversible call is held until you approve it from another terminal, and you can block or confirm any class or tool by policy. Since T9 there is *preview*: run the whole session dry and get a report of what the agent would have done to the world. That completes Phase 1; no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
+Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and so is **Phase 1**: every call is classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Since T8 Sagaz also *gates*: by default an irreversible call is held until you approve it from another terminal, and you can block or confirm any class or tool by policy. Since T9 there is *preview*: run the whole session dry and get a report of what the agent would have done to the world. That completes Phase 1; no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
 
 ## Quickstart
 
@@ -73,7 +73,7 @@ Colour is used only on a TTY and honours [`NO_COLOR`](https://no-color.org).
 
 ## Preview: run the agent dry
 
-`sagaz serve --preview` (or `"preview": true` in `sagaz.config.json`) runs the whole session without touching the world. Read-only calls are forwarded — a blind agent cannot plan — and every other call is classified, recorded with `status = 'dry'` and answered with a note written for an LLM: *recorded but NOT executed, would have been classified C, keep planning, nothing in this session reaches the real world*. The policy does not run in preview (nothing executes, so there is nothing to confirm); what it *would* have done is recorded instead. Dry effects are hashed into the chain like everything else — a plan is auditable history, the "what it meant to do" you later compare with "what it did".
+`sagaz serve --preview` (or `"preview": true` in `sagaz.config.json`) runs the whole session without touching the world. Read-only calls are forwarded — a blind agent cannot plan — and every other call is classified, recorded with `status = 'dry'` and answered with a note written for an LLM: *recorded but NOT executed, would have been classified C, keep planning, nothing in this session reaches the real world*. The policy is evaluated but not applied in preview (nothing executes, so there is nothing to confirm); what it *would* have done is recorded instead. Dry effects are hashed into the chain like everything else — a plan is auditable history, the "what it meant to do" you later compare with "what it did".
 
 Real output, unedited — the toybox reel through `sagaz serve --preview`, the world seeded and then inspected: three contacts, one email, `$0.00` in escrow, zero transfers, before and after.
 
