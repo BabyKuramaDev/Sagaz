@@ -9,13 +9,14 @@ export interface Style {
   red(s: string): string;
   yellow(s: string): string;
   cyan(s: string): string;
+  magenta(s: string): string;
 }
 
 const ESC = "\x1b";
 
 export function makeStyle(enabled: boolean): Style {
   const wrap = (open: number, close: number) => (s: string) => (enabled ? `${ESC}[${open}m${s}${ESC}[${close}m` : s);
-  return { bold: wrap(1, 22), dim: wrap(2, 22), green: wrap(32, 39), red: wrap(31, 39), yellow: wrap(33, 39), cyan: wrap(36, 39) };
+  return { bold: wrap(1, 22), dim: wrap(2, 22), green: wrap(32, 39), red: wrap(31, 39), yellow: wrap(33, 39), cyan: wrap(36, 39), magenta: wrap(35, 39) };
 }
 
 /** NO_COLOR wins over FORCE_COLOR (per no-color.org: the user's opt-out is final); then TTY. */

@@ -5,6 +5,7 @@ import { LookupError, type CommandIO } from "./commands/context.js";
 import { decideCommand } from "./commands/approve.js";
 import { ledgerCommand } from "./commands/ledger.js";
 import { pendingCommand } from "./commands/pending.js";
+import { previewReportCommand } from "./commands/preview-report.js";
 import { statusCommand } from "./commands/status.js";
 import { verifyCommand } from "./commands/verify.js";
 import { colourEnabled, makeStyle } from "./format.js";
@@ -13,7 +14,7 @@ import { CLI_VERSION } from "./version.js";
 const USAGE = `sagaz — effect ledger and undo for AI agents
 
 Usage:
-  sagaz serve                         Run the MCP proxy on stdio
+  sagaz serve [--preview]             Run the MCP proxy on stdio (--preview: run the session dry)
   sagaz ledger [filters]              Effects of a session (default: last)
       --session <id|last>  --tool <name>  --status <pending|ok|error|blocked|dry>  --json
   sagaz status [--last <n>]           Sessions, ledger location, overall state
@@ -21,6 +22,7 @@ Usage:
   sagaz pending                       Calls held by a confirm gate, waiting for you
   sagaz approve <id> [--by <name>]    Let a held call through
   sagaz deny <id> [--by <name>]       Refuse a held call (the agent is told, nothing runs)
+  sagaz preview-report [--session]    What a dry session would have done to the world (--json)
 
 Options:
   --config <path>                     sagaz.config.json to use (default: ${DEFAULT_CONFIG_PATH})
@@ -60,19 +62,21 @@ async function main(argv: readonly string[]): Promise<number> {
       return decideCommand("allow", parsed, configPath, io);
     case "deny":
       return decideCommand("deny", parsed, configPath, io);
+    case "preview-report":
+      return previewReportCommand(parsed, configPath, io);
     case "serve":
-      return serve(configPath);
+      return serve(configPath, parsed.flags["preview"] === true);
     default:
       throw new UsageError(`Unknown command: ${cmd}`);
   }
 }
 
-async function serve(configPath: string): Promise<number> {
+async function serve(configPath: string, preview: boolean): Promise<number> {
   // stdout is the MCP channel from here on: anything human goes to stderr.
   const config = await loadConfig(configPath);
   const ledger = new Ledger(config.ledger.path, { maxResultBytes: config.ledger.maxResultBytes });
   process.stderr.write(`sagaz: ledger at ${config.ledger.path}\n`);
-  const proxy = new SagazProxy(config, { version: CLI_VERSION, ledger });
+  const proxy = new SagazProxy(config, { version: CLI_VERSION, ledger, preview });
   try {
     await proxy.start();
   } catch (err) {

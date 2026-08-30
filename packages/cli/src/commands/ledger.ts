@@ -1,4 +1,5 @@
 import type { EffectRow, EffectStatus, GateMeta } from "sagaz-core";
+import { previewMeta, wouldHaveCell } from "./preview-report.js";
 import { UsageError, type Parsed } from "../args.js";
 import { formatBytes, formatDuration, formatTime, shortId, table, type Style } from "../format.js";
 import { clientLabel, openReadonlyLedger, requireSession, type CommandIO } from "./context.js";
@@ -29,24 +30,27 @@ export async function ledgerCommand(parsed: Parsed, configPath: string, io: Comm
       io.out(style.dim("no effects match"));
       return 0;
     }
-    // The gate column only appears when something was stopped: the common case stays narrow.
+    // The gate and preview columns only appear when something was stopped or ran dry: the common case stays narrow.
     const gated = rows.some((r) => r.status === "blocked");
+    const dry = rows.some((r) => r.status === "dry");
     io.out(
       table(
         [
           { header: "seq", align: "right" }, { header: "tool" }, { header: "server" }, { header: "class" },
           { header: "status" }, { header: "duration", align: "right" }, { header: "result", align: "right" }, { header: "id" },
           ...(gated ? [{ header: "gate" }] : []),
+          ...(dry ? [{ header: "preview" }] : []),
         ],
         rows.map((r) => [
           String(r.seq), r.tool, r.server, classCell(r, style), statusCell(r.status, style),
           formatDuration(r.ts_start, r.ts_end), formatBytes(r.result_json === null ? null : Buffer.byteLength(r.result_json)), style.dim(shortId(r.id)),
           ...(gated ? [r.status === "blocked" ? style.red(gateReason(r)) : ""] : []),
+          ...(dry ? [r.status === "dry" ? previewNote(r, style) : ""] : []),
         ]),
         style,
       ),
     );
-    io.out(style.dim(`${rows.length} effect(s)`));
+    io.out(style.dim(`${rows.length} effect(s)${dry ? ` — ${rows.filter((r) => r.status === "dry").length} recorded dry, not executed (sagaz preview-report)` : ""}`));
     return 0;
   } finally {
     ledger.close();
@@ -66,6 +70,7 @@ function statusCell(status: string, style: Style): string {
     case "error": return style.red("error");
     case "blocked": return style.red("blocked");
     case "pending": return style.yellow("pending");
+    case "dry": return style.magenta("dry");
     default: return status;
   }
 }
@@ -85,4 +90,10 @@ export function gateReason(r: EffectRow): string {
   } catch {
     return "blocked";
   }
+}
+
+/** What a dry effect would have done outside preview, from the metadata the proxy stored with the reply. */
+function previewNote(r: EffectRow, style: Style): string {
+  const meta = previewMeta(r);
+  return `${style.magenta("not executed")} — ${wouldHaveCell(meta?.wouldHave ?? null, style)}`;
 }

@@ -4,6 +4,14 @@
  * classified (R/C/I, see classifier/), gated by policy (see policy/) and recorded in the
  * effect ledger — blocked attempts included.
  *
+ * Preview mode (`sagaz serve --preview` / `"preview": true`) runs the whole session dry: a call
+ * whose class is `read` (by the full cascade) is forwarded as usual so the agent can still see
+ * the world and plan; every other class — R, C, I and `unknown` — is recorded as 'dry' and
+ * answered with a spoken note, never forwarded. The policy does not run in preview: nothing
+ * executes, so there is nothing to confirm or block. Honest edge: a mutating tool wrongly
+ * classified `read` (a lying `readOnlyHint`, or a user rule) WOULD run — which is why `unknown`
+ * is not forwarded. When in doubt, dry.
+ *
  * Tool naming is passthrough by design: names are stable regardless of how many servers are
  * configured. A collision between two downstream servers is a startup error that points the
  * user to the explicit `prefix` option — never an automatic rename.
@@ -24,7 +32,7 @@ import {
 import { PREFIX_SEPARATOR, type SagazConfig, type ServerConfig } from "./config.js";
 import { classify, type Classification } from "./classifier/index.js";
 import { configHash, type Ledger } from "./ledger/index.js";
-import { evaluatePolicy, gateResult, type GateOutcome, type PolicyVerdict } from "./policy/index.js";
+import { PREVIEW_INSTRUCTIONS, evaluatePolicy, gateResult, previewResult, type GateOutcome, type PolicyVerdict } from "./policy/index.js";
 
 export const PROXY_NAME = "sagaz";
 
@@ -55,6 +63,8 @@ export interface ProxyOptions {
   ledger?: Ledger;
   /** How often a `confirm` gate re-reads the approvals table while waiting (ms). */
   approvalPollMs?: number;
+  /** Effect preview for the whole session (`sagaz serve --preview`). Also enabled by `preview: true` in the config. */
+  preview?: boolean;
 }
 
 export function exposedName(server: ServerConfig, downstreamName: string): string {
@@ -102,6 +112,7 @@ export class SagazProxy {
   private readonly connectTransport: (name: string, config: ServerConfig) => Transport;
   private readonly ledger: Ledger | undefined;
   private readonly approvalPollMs: number | undefined;
+  private readonly preview: boolean;
   private sessionId: string | undefined;
 
   constructor(
@@ -113,6 +124,12 @@ export class SagazProxy {
     this.connectTransport = opts.connect ?? ((_name, cfg) => spawnTransport(cfg));
     this.ledger = opts.ledger;
     this.approvalPollMs = opts.approvalPollMs;
+    this.preview = Boolean(opts.preview || config.preview);
+  }
+
+  /** True when the session runs dry (see the module comment). */
+  get isPreview(): boolean {
+    return this.preview;
   }
 
   /** Ledger session opened by the client's `initialize`, if any. */
@@ -140,6 +157,8 @@ export class SagazProxy {
     const instructions = this.downstreams
       .map((d) => d.client.getInstructions())
       .filter((i): i is string => typeof i === "string" && i.length > 0);
+    // In preview the agent is told up front, not only call by call: a plan made in the dark is worthless.
+    if (this.preview) instructions.unshift(PREVIEW_INSTRUCTIONS);
     this.server = new Server(
       { name: PROXY_NAME, version: this.version },
       { capabilities: { tools: { listChanged: true } }, ...(instructions.length ? { instructions: instructions.join("\n\n") } : {}) },
@@ -148,7 +167,7 @@ export class SagazProxy {
     this.server.setRequestHandler(CallToolRequestSchema, (req, extra) => this.callTool(req.params.name, req.params.arguments ?? {}, extra.signal));
     // One ledger session per client `initialize`, with the client's identity captured.
     this.server.oninitialized = () => this.openSession("initialize");
-    this.log(`sagaz: proxying ${this.routes.size} tool(s) from ${this.downstreams.map((d) => d.name).join(", ")}`);
+    this.log(`sagaz: proxying ${this.routes.size} tool(s) from ${this.downstreams.map((d) => d.name).join(", ")}${this.preview ? " — PREVIEW MODE: mutations are recorded, not executed" : ""}`);
   }
 
   /** Exposes the proxy to the client on the given transport. Requires a successful `start()`. */
@@ -195,7 +214,7 @@ export class SagazProxy {
    * Ledger write policy: a failure to record never changes what the client sees. The call
    * already happened (or failed) downstream; we log loudly and return the real outcome.
    */
-  private record(effectId: string | undefined, input: { status: "ok" | "error" | "blocked"; result: unknown }): void {
+  private record(effectId: string | undefined, input: { status: "ok" | "error" | "blocked" | "dry"; result: unknown }): void {
     if (effectId === undefined || !this.ledger) return;
     try {
       this.ledger.end(effectId, input);
@@ -228,6 +247,16 @@ export class SagazProxy {
       this.ledger && this.sessionId
         ? this.ledger.begin({ sessionId: this.sessionId, server: route.server, tool: route.downstreamName, args, classification })
         : undefined;
+
+    // Preview: reads flow, everything else closes 'dry' here. The verdict is computed but never
+    // applied — it is reported ("would have waited for approval") so the preview tells the whole story.
+    if (this.preview && classification.class !== "read") {
+      const ctx = { tool: route.downstreamName, server: route.server, class: classification.class, wouldHave: verdict.action };
+      const result = previewResult(ctx, { preview: true, class: ctx.class, wouldHave: verdict.action, policy: verdict.reason });
+      this.record(effectId, { status: "dry", result });
+      this.log(`sagaz: dry ${route.downstreamName} (${ctx.class}; preview — would have: ${verdict.action})`);
+      return result;
+    }
 
     if (verdict.action !== "allow") {
       const stopped = await this.gate(route, effectId, classification, verdict, signal);

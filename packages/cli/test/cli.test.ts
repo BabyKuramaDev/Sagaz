@@ -214,3 +214,69 @@ describe("sagaz pending / approve / deny", () => {
     expect(sagaz("ledger", "--status", "pending").out).not.toMatch(/gate/);
   });
 });
+
+describe("sagaz preview-report / ledger on a dry session", () => {
+  const dryResult = (cls: string, wouldHave: string) => ({
+    content: [{ type: "text", text: "Preview mode: this call was recorded but NOT executed." }], isError: false,
+    _meta: { sagaz: { preview: true, class: cls, wouldHave, policy: `default policy: class ${cls} → ${wouldHave}` } },
+  });
+
+  /** The reel run through `sagaz serve --preview`: two reads executed, four calls dry. */
+  function seedDry(): string {
+    const ledger = new Ledger(join(dir, "ledger.db"), { clock });
+    const s = ledger.openSession({ clientInfo: { name: "claude-code", version: "2.0.0" } });
+    const add = (tool: string, cls: "read" | "R" | "C" | "I" | "unknown", args: unknown, wouldHave?: string) => {
+      const id = ledger.begin({ sessionId: s.id, server: "toybox", tool, args, classification: { class: cls, source: "rule", reason: "test" } });
+      if (wouldHave) ledger.end(id, { status: "dry", result: dryResult(cls, wouldHave) });
+      else ledger.end(id, { status: "ok", result: { content: [{ type: "text", text: "[]" }] } });
+    };
+    add("list_contacts", "read", {});
+    add("list_timeline", "read", {});
+    add("send_email", "C", { to: "ada@analytical.engine", subject: "Welcome", body: "Hi" }, "allow");
+    add("send_email", "C", { to: "grace@cobol.navy", subject: "Welcome", body: "Hi" }, "allow");
+    add("transfer_funds", "I", { from_account: "acc-payroll", to_account: "acc-vendor", amount_cents: 250_000 }, "confirm");
+    add("delete_contact", "unknown", { id: 1 }, "block");
+    ledger.close();
+    return s.id;
+  }
+
+  it("preview-report groups the dry effects by class, says what the policy would have done, and lists them", () => {
+    seedDry();
+    const { code, out } = sagaz("preview-report");
+    expect(code).toBe(0);
+    expect(out).toContain("Nothing reached the world. 6 call(s): 2 read(s) executed, 4 recorded dry.");
+    expect(out).toMatch(/I\s+1\s+transfer_funds\n\s+irreversible: no way back once executed; it would have waited for your approval/);
+    expect(out).toMatch(/C\s+2\s+send_email ×2\n\s+compensable: cannot be undone, only corrected afterwards; all would have run without asking/);
+    expect(out).toMatch(/unknown\s+1\s+delete_contact\n\s+reversibility unknown.*; it would have been blocked by policy/);
+    expect(out).not.toMatch(/\bR\s+\d/);
+    expect(out).toMatch(/seq\s+tool\s+server\s+class\s+outside preview\s+args/);
+    expect(out).toMatch(/5\s+transfer_funds\s+toybox\s+I\s+would wait for approval\s+from_account=acc-payroll/);
+    expect(out).toMatch(/6\s+delete_contact\s+toybox\s+unknown\s+would be blocked\s+id=1/);
+    expect(out).not.toMatch(/list_contacts/);
+  });
+
+  it("preview-report --json, and honest messages for sessions that did not run dry", () => {
+    const json = JSON.parse(seedDry() && sagaz("preview-report", "--json").out) as { reads: number; dry: unknown[]; groups: { class: string; count: number }[] };
+    expect(json.reads).toBe(2);
+    expect(json.dry).toHaveLength(4);
+    expect(json.groups.map((g) => [g.class, g.count])).toEqual([["I", 1], ["C", 2], ["unknown", 1]]);
+
+    seedLedger();
+    expect(sagaz("preview-report").out).toContain("nothing ran dry in this session — was it started with `sagaz serve --preview`?");
+    expect(sagaz("preview-report", "--session", "nope")).toMatchObject({ code: 1, err: expect.stringMatching(/No session matches "nope"/) });
+  });
+
+  it("ledger marks dry rows and shows the preview column only when something ran dry", () => {
+    seedDry();
+    const plain = sagaz("ledger").out;
+    expect(plain).toMatch(/status\s+duration\s+result\s+id\s+preview/);
+    expect(plain).toMatch(/5\s+transfer_funds\s+toybox\s+I\s+dry\s+150ms\s+\d+B\s+\S+\s+not executed — would wait for approval/);
+    expect(plain).toMatch(/1\s+list_contacts\s+toybox\s+read\s+ok\s+150ms\s+\d+B\s+\S+\n/);
+    expect(plain).toContain("6 effect(s) — 4 recorded dry, not executed (sagaz preview-report)");
+    expect(plain).not.toMatch(/gate/);
+    const colour = spawnSync(process.execPath, [bin, "--config", configPath, "ledger"], { encoding: "utf8", env: { ...process.env, NO_COLOR: "", FORCE_COLOR: "1" } }).stdout;
+    expect(colour).toContain("\x1b[35mdry\x1b[39m");
+    expect(colour).toContain("\x1b[35mnot executed\x1b[39m");
+    expect(sagaz("ledger", "--status", "ok").out).not.toMatch(/preview/);
+  });
+});
