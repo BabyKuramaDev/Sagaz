@@ -101,7 +101,7 @@ Los agentes ejecutan acciones sobre el mundo real (DBs, APIs, emails, archivos) 
 **Fase 0 — El esqueleto que respira (~2-3 semanas de foco)**
 Proxy pass-through funcionando con Claude Code + ledger persistente + CLI para verlo. Sin clasificación, sin rollback. Éxito = "corrí mi agente a través de Sagaz y puedo ver cada efecto que produjo".
 
-**Fase 1 — Ojos (clasificación + preview)**
+**Fase 1 — Ojos (clasificación + preview)** — **completa** (T7–T9, tag `v0.2.0-phase1`, 29-08-2026)
 Clasificador R/C/I (niveles 1 y 2, sin LLM) + preview + gates básicos por política. Éxito = "Sagaz me frenó un `DROP TABLE` y me mostró qué iba a tocar antes de tocarlo". **Este es el momento del primer post/lanzamiento público** — preview + gate ya es demo viral con el toybox.
 
 **Fase 2 — Manos (rollback determinístico)**
