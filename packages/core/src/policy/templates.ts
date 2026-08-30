@@ -111,6 +111,13 @@ const WOULD_HAVE: Record<PolicyAction, string> = {
  * Spoken like the gate templates, but it is not an error: the agent is planning, and a plan is
  * exactly what preview mode wants. `isError: false` so the model keeps going instead of
  * treating every mutation as a failure; the text makes sure it does not believe anything happened.
+ *
+ * This is the deliberate inverse of the gate templates (T8), and it is policy, not accident. A gate
+ * is a *point* stop inside a live session: the call was supposed to run and did not, so the model
+ * must treat it as a failure and route around it. Preview is a *session contract*: the model was
+ * told at initialize that nothing runs, so every dry reply is the expected outcome of a call that
+ * went exactly as the contract said. Marking those as errors would teach the model that its whole
+ * plan is failing — the opposite of what a preview is for.
  */
 export function previewMessage(ctx: PreviewContext): string {
   return [
