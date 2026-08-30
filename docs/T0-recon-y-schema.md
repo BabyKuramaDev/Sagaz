@@ -138,3 +138,27 @@ Formato canónico exacto (claves, orden, escapes, `genesis_hash`): documentado e
 - [x] Schema v1 diseñado con decisiones justificadas
 - [x] **Validación de Jero** → schema congelado (T4, 29-08-2026; ver §4b y `packages/core/src/ledger/schema.ts`)
 - [x] Nombre: `sagaz` en npm está tomado (paquete ajeno, 2018–2022). Decisión (T6, 29-08-2026): la marca sigue siendo **Sagaz**; la CLI se publica como **`sagaz-mcp`** (libre, verificado) con bin `sagaz`; core y toybox como `@sagaz/core` y `@sagaz/toybox`. Nada se publica hasta el lanzamiento de Fase 1.
+## 4c. Enmienda T8 — tabla `approvals` (gates con confirmación)
+
+Los gates por política (T8) necesitan un canal entre el proxy (que retiene la `tools/call`) y el operador (que decide desde otra terminal). Ese canal es SQLite: **tabla nueva, `effects` intacta** — ni una columna ni el hash cambian; el schema de §3 sigue congelado. Validado en el checkpoint de T8 (29-08-2026).
+
+```sql
+CREATE TABLE approvals (
+  id           TEXT PRIMARY KEY,               -- ulid
+  effect_id    TEXT NOT NULL REFERENCES effects(id),
+  requested_at TEXT NOT NULL,
+  decided_at   TEXT,
+  decision     TEXT CHECK (decision IN ('allow','deny')),
+  decided_by   TEXT                            -- operador (`sagaz approve --by`), o 'timeout'
+);
+CREATE INDEX idx_approvals_effect ON approvals (effect_id);
+CREATE INDEX idx_approvals_open   ON approvals (requested_at) WHERE decided_at IS NULL;
+```
+
+Convenciones:
+
+1. **Ciclo de vida del efecto retenido.** `begin()` inserta el efecto `pending` como siempre; el proxy abre una fila en `approvals` y pollea `decided_at` (intervalo corto, snapshot fresco por lectura gracias a WAL). Con `allow` el flujo sigue igual que un efecto normal (cierra `ok`/`error`). Con `deny` o timeout el efecto cierra `status = 'blocked'` **sin haber sido reenviado**, y entra a la cadena de hashes como cualquier otro: un intento frenado es historia auditable.
+2. **Timeout = deny, y queda escrito.** Al vencer `policy.confirmTimeoutMs` el proxy escribe él mismo `decision = 'deny', decided_by = 'timeout'`. Así `sagaz pending` deja de listarlo y un `sagaz approve` tardío es rechazado con la decisión vigente, en vez de quedar como aprobación fantasma que nadie consume. La escritura es atómica sobre `decided_at IS NULL`: si el operador gana la carrera en el último instante, vale su decisión.
+3. **El porqué vive en `result_json`.** Un efecto `blocked` guarda como resultado exactamente la respuesta que recibió el agente (la plantilla, `isError: true`) con la metadata del gate en `_meta.sagaz` (`gate`, `class`, `policy`, `approvalId`, `decidedBy`, `waitedMs`). Una sola fuente de verdad para "qué se le dijo al agente" y "por qué"; `sagaz ledger` la lee de ahí.
+4. **`block` no abre approval.** Solo `confirm` escribe en esta tabla. Un `block` cierra `blocked` de inmediato.
+5. **Un solo escritor por cadena, sin cambios.** La CLI (`approve`/`deny`) escribe únicamente en `approvals`, nunca en `effects`; la invariante de `tail()` (§4b.2) no se toca. Si el proxy muere con una approval abierta, el efecto queda `pending` (huella honesta del crash, §4b.1) y la fila abierta queda visible en `sagaz pending` hasta que alguien decida; nadie la consume.

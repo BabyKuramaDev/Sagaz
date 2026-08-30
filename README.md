@@ -8,7 +8,7 @@ The goal: one undo for everything your agent touched — including what no snaps
 
 ## Status
 
-Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and **Phase 1 is in progress**: every call is now classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Sagaz still only *observes*: no preview, no gates, no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
+Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and **Phase 1 is in progress**: every call is classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Since T8 Sagaz also *gates*: by default an irreversible call is held until you approve it from another terminal, and you can block or confirm any class or tool by policy. No preview, no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
 
 ## Quickstart
 
@@ -39,6 +39,8 @@ sagaz ledger --tool send_email   # filters: --session <id|last>, --tool <name>, 
 sagaz ledger --json              # one raw row per line (NDJSON)
 sagaz status                     # sessions, ledger location, overall state
 sagaz verify                     # walk the hash chain of a session and report OK or the first break
+sagaz pending                    # calls held by a confirm gate, waiting for you
+sagaz approve <id> | deny <id>   # decide; the agent gets the real result, or a message saying nothing ran
 ```
 
 Real output, unedited (the toybox reel through Sagaz):
@@ -66,6 +68,31 @@ OK 6 effect(s) chained
 ```
 
 Colour is used only on a TTY and honours [`NO_COLOR`](https://no-color.org).
+
+## Gates: the guardian
+
+Out of the box, **a call classified `I` (irreversible) does not run until you say so**. The agent's tool call simply waits; in another terminal:
+
+```
+$ sagaz pending
+id        tool            server  class  args                                               waiting
+────────  ──────────────  ──────  ─────  ────────────────────────────────────────────────  ───────
+78HJNT9Q  transfer_funds  toybox  I      from_account=acc-payroll, to_account=acc-vendor…  12s
+1 call(s) held — sagaz approve <id> | sagaz deny <id>
+
+$ sagaz approve 78HJNT9Q
+approved transfer_funds 78HJNT9Q by jero
+```
+
+Approve, and the agent receives exactly what the server returned — it never learns it waited. Deny (or let `policy.confirmTimeoutMs` run out, default 2 minutes), and the agent receives an `isError` result written for an LLM: what was stopped, why, *do not retry*, the operator knows, carry on with something else. The attempt is recorded as `blocked` in the ledger — hashed like everything else — and `sagaz ledger` shows it in red with the reason.
+
+Everything else (`read`, `R`, `C`, `unknown`) flows and is only recorded. Change that per class or per tool in `sagaz.config.json` (`allow` | `confirm` | `block`; a tool rule beats the class map):
+
+```json
+{ "servers": { "...": {} }, "policy": { "class": { "unknown": "confirm" }, "tools": [ { "tool": "transfer_*", "server": "bank", "action": "block" } ] } }
+```
+
+Details and the exact texts the agent sees: [`packages/core/README.md`](packages/core/README.md#gates-what-happens-once-a-call-has-a-class).
 
 ## Development
 
