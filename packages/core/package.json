@@ -1,5 +1,5 @@
 {
-  "name": "@sagaz/core",
+  "name": "sagaz-core",
   "version": "0.0.0",
   "description": "Sagaz core: MCP proxy and effect ledger",
   "license": "MIT",

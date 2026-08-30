@@ -353,8 +353,10 @@ export class Ledger {
   }
 
   /**
-   * Waits for a decision by polling. On timeout — or when `signal` aborts because the agent
-   * cancelled the request or disconnected — it writes `deny` itself (by 'timeout' / 'cancelled'),
+   * Waits for a decision by polling. An approval authorises a LIVE wait, not a standing order:
+   * it is only meaningful while the caller is still there to receive the result. So on timeout —
+   * or when `signal` aborts because the agent cancelled the request or disconnected — this
+   * writes `deny` itself (by 'timeout' / 'cancelled'),
    * so `sagaz pending` stops listing the call and a late `sagaz approve` is refused rather than
    * forwarding a call nobody is waiting for. If the operator wins the race at the last instant,
    * their decision stands.

@@ -1,4 +1,4 @@
-# @sagaz/toybox
+# sagaz-toybox
 
 A deliberately dangerous MCP server that simulates an **external world** — CRM, email, tweets, a bank — persisted in a SQLite file you can inspect from outside the agent. It exists for Sagaz's e2e tests and for demos: every reel starts with an agent breaking this world.
 

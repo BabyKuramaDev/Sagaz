@@ -1,5 +1,5 @@
 import { userInfo } from "node:os";
-import { ApprovalError, type ApprovalDecision, type ApprovalRow } from "@sagaz/core";
+import { ApprovalError, type ApprovalDecision, type ApprovalRow } from "sagaz-core";
 import { UsageError, type Parsed } from "../args.js";
 import { shortId } from "../format.js";
 import { LookupError, openWritableLedger, type CommandIO } from "./context.js";

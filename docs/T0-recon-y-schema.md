@@ -137,7 +137,7 @@ Formato canónico exacto (claves, orden, escapes, `genesis_hash`): documentado e
 - [x] Diferenciación documentada y verificable (tabla §2)
 - [x] Schema v1 diseñado con decisiones justificadas
 - [x] **Validación de Jero** → schema congelado (T4, 29-08-2026; ver §4b y `packages/core/src/ledger/schema.ts`)
-- [x] Nombre: `sagaz` en npm está tomado (paquete ajeno, 2018–2022). Decisión (T6, 29-08-2026): la marca sigue siendo **Sagaz**; la CLI se publica como **`sagaz-mcp`** (libre, verificado) con bin `sagaz`; core y toybox como `@sagaz/core` y `@sagaz/toybox`. Nada se publica hasta el lanzamiento de Fase 1.
+- [x] Nombre: `sagaz` en npm está tomado (paquete ajeno, 2018–2022). Decisión (T6, 29-08-2026): la marca sigue siendo **Sagaz**; la CLI se publica como **`sagaz-mcp`** (libre, verificado) con bin `sagaz`; core y toybox como `sagaz-core` y `sagaz-toybox` (decisión post-T8: sin scope, la org `@sagaz` en npm no estaba disponible). Nada se publica hasta el lanzamiento de Fase 1.
 ## 4c. Enmienda T8 — tabla `approvals` (gates con confirmación)
 
 Los gates por política (T8) necesitan un canal entre el proxy (que retiene la `tools/call`) y el operador (que decide desde otra terminal). Ese canal es SQLite: **tabla nueva, `effects` intacta** — ni una columna ni el hash cambian; el schema de §3 sigue congelado. Validado en el checkpoint de T8 (29-08-2026).

@@ -1,4 +1,4 @@
-# @sagaz/core
+# sagaz-core
 
 The proxy and the effect ledger behind the [`sagaz`](../cli) CLI. You normally do not import this package; it documents the two contracts users interact with through `sagaz.config.json`: **classification** (this file) and the **ledger hash chain** (`src/ledger/hash.ts`).
 

@@ -1,4 +1,4 @@
-import { Ledger, LedgerNotFoundError, loadConfig, type SessionRow } from "@sagaz/core";
+import { Ledger, LedgerNotFoundError, loadConfig, type SessionRow } from "sagaz-core";
 import { UsageError } from "../args.js";
 import type { Style } from "../format.js";
 

@@ -1,4 +1,4 @@
-import type { EffectRow, EffectStatus, GateMeta } from "@sagaz/core";
+import type { EffectRow, EffectStatus, GateMeta } from "sagaz-core";
 import { UsageError, type Parsed } from "../args.js";
 import { formatBytes, formatDuration, formatTime, shortId, table, type Style } from "../format.js";
 import { clientLabel, openReadonlyLedger, requireSession, type CommandIO } from "./context.js";

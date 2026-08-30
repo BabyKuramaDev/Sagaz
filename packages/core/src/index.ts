@@ -1,5 +1,5 @@
 /**
- * @sagaz/core — MCP proxy + effect ledger.
+ * sagaz-core — MCP proxy + effect ledger.
  *
  * Transparent pass-through proxy + R/C/I classifier (levels 1–3) + policy gates + effect ledger v1.
  */

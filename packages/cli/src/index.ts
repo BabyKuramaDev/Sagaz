@@ -1,5 +1,5 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CORE_VERSION, ConfigError, DEFAULT_CONFIG_PATH, Ledger, LedgerNotFoundError, SagazProxy, ToolCollisionError, loadConfig } from "@sagaz/core";
+import { CORE_VERSION, ConfigError, DEFAULT_CONFIG_PATH, Ledger, LedgerNotFoundError, SagazProxy, ToolCollisionError, loadConfig } from "sagaz-core";
 import { UsageError, parseFlags } from "./args.js";
 import { LookupError, type CommandIO } from "./commands/context.js";
 import { decideCommand } from "./commands/approve.js";

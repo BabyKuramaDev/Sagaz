@@ -101,7 +101,7 @@ pnpm install && pnpm build && pnpm test
 node packages/cli/dist/index.js --version
 ```
 
-Packages: [`@sagaz/core`](packages/core) (proxy + ledger), [`sagaz-mcp`](packages/cli) (the `sagaz` CLI), [`@sagaz/toybox`](packages/toybox).
+Packages: [`sagaz-core`](packages/core) (proxy + ledger), [`sagaz-mcp`](packages/cli) (the `sagaz` CLI), [`sagaz-toybox`](packages/toybox).
 
 ## How effects get their class
 

@@ -1,4 +1,4 @@
-import { Ledger, LedgerNotFoundError, loadConfig } from "@sagaz/core";
+import { Ledger, LedgerNotFoundError, loadConfig } from "sagaz-core";
 import type { Parsed } from "../args.js";
 import { formatTime, table } from "../format.js";
 import { clientLabel, positiveInt, type CommandIO } from "./context.js";
