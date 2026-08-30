@@ -59,7 +59,12 @@ const PolicyToolRuleSchema = z.object({
   reason: z.string().min(1).optional(),
 });
 
-/** Factory policy — the guardian default: irreversible calls wait for the operator, everything else flows. */
+/**
+ * Factory policy — the guardian default: irreversible calls wait for the operator, everything
+ * else flows. Note that `unknown` flows too: by name alone `delete_*`/`update_*` are `unknown`
+ * (see classifier/), so out of the box a `delete_contact` runs while a `transfer_funds` waits.
+ * The guardian is about class I only; `"unknown": "confirm"` is one line away.
+ */
 export const DEFAULT_CLASS_POLICY: Readonly<Record<z.infer<typeof EffectClassSchema>, z.infer<typeof PolicyActionSchema>>> = {
   read: "allow",
   R: "allow",

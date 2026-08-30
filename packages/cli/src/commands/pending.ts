@@ -1,13 +1,13 @@
 import type { Parsed } from "../args.js";
 import { formatWait, shortId, table } from "../format.js";
-import { openWritableLedger, type CommandIO } from "./context.js";
+import { openReadonlyLedger, type CommandIO } from "./context.js";
 
 /** Longest args preview in the table; the full args are in `sagaz ledger --json`. */
 const ARGS_WIDTH = 48;
 
 export async function pendingCommand(_parsed: Parsed, configPath: string, io: CommandIO): Promise<number> {
   const { style } = io;
-  const ledger = await openWritableLedger(configPath);
+  const ledger = await openReadonlyLedger(configPath);
   try {
     const rows = ledger.listPendingApprovals();
     if (rows.length === 0) {

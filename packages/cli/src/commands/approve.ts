@@ -10,7 +10,7 @@ export async function decideCommand(decision: ApprovalDecision, parsed: Parsed, 
   const ref = parsed.positional[1];
   if (ref === undefined) throw new UsageError(`sagaz ${verb} needs the id of a held call (see \`sagaz pending\`)`);
   if (parsed.positional.length > 2) throw new UsageError(`Unexpected argument: ${parsed.positional[2]}`);
-  const by = typeof parsed.flags["by"] === "string" ? parsed.flags["by"] : operatorName();
+  const by = typeof parsed.flags["by"] === "string" && parsed.flags["by"].trim() !== "" ? parsed.flags["by"].trim() : operatorName();
 
   const ledger = await openWritableLedger(configPath);
   try {

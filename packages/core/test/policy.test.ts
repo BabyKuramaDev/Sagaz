@@ -17,6 +17,7 @@ describe("policy config", () => {
     expect(() => parseConfig({ servers, policy: { class: { I: "ask" } } })).toThrow(/policy\.class\.I/);
     expect(() => parseConfig({ servers, policy: { class: { X: "allow" } } })).toThrow(/policy\.class/);
     expect(() => parseConfig({ servers, policy: { tools: [{ tool: "a", action: "maybe" }] } })).toThrow(/policy\.tools\.0\.action/);
+    expect(() => parseConfig({ servers, policy: { confirmTimeoutMs: 0 } })).toThrow(/policy\.confirmTimeoutMs/);
   });
 });
 
@@ -63,7 +64,7 @@ describe("gate templates", () => {
     expect(msg).toContain('`transfer_funds` on server "bank" was NOT executed');
     expect(msg).toContain("classified I (irreversible); policy.tools transfer_* → block");
     expect(msg).toContain("Do not retry");
-    expect(msg).toContain("The operator has been notified");
+    expect(msg).toContain("recorded in the Sagaz effect ledger for the operator");
     expect(msg).toContain("continue with other tasks");
   });
   it("denied: names the operator", () => {

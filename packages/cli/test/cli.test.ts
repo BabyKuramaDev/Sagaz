@@ -189,14 +189,17 @@ describe("sagaz pending / approve / deny", () => {
     expect(sagaz("approve")).toMatchObject({ code: 1, err: expect.stringMatching(/sagaz approve needs the id of a held call/) });
     expect(sagaz("deny", "zzzzzzzz")).toMatchObject({ code: 1, err: expect.stringMatching(/^sagaz: No held call matches "zzzzzzzz"/) });
 
-    const ok = sagaz("approve", effectId.slice(-8), "--by", "jero");
+    // Blank --by falls back to the system user.
+    expect(sagaz("approve", effectId.slice(-8), "--by", "")).toMatchObject({ code: 0, out: expect.stringMatching(/approved transfer_funds \S+ by \S+/) });
+    const second = seedHeld().effectId;
+    const ok = sagaz("approve", second.slice(-8), "--by", "jero");
     expect(ok.code).toBe(0);
-    expect(ok.out.trim()).toBe(`approved transfer_funds ${effectId.slice(-8)} by jero`);
+    expect(ok.out.trim()).toBe(`approved transfer_funds ${second.slice(-8)} by jero`);
     expect(sagaz("pending").out).toContain("nothing is waiting for approval");
-    expect(sagaz("deny", effectId)).toMatchObject({ code: 1, err: expect.stringMatching(/Already decided: allow by jero/) });
+    expect(sagaz("deny", second)).toMatchObject({ code: 1, err: expect.stringMatching(/Already decided: allow by jero/) });
 
     const ledger = new Ledger(join(dir, "ledger.db"), { readonly: true });
-    expect(ledger.findApprovalsByEffect(effectId)[0]).toMatchObject({ decision: "allow", decided_by: "jero" });
+    expect(ledger.findApprovalsByEffect(second)[0]).toMatchObject({ decision: "allow", decided_by: "jero" });
     ledger.close();
   });
 

@@ -145,7 +145,7 @@ export class SagazProxy {
       { capabilities: { tools: { listChanged: true } }, ...(instructions.length ? { instructions: instructions.join("\n\n") } : {}) },
     );
     this.server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [...this.routes.values()].map((r) => r.tool) }));
-    this.server.setRequestHandler(CallToolRequestSchema, (req) => this.callTool(req.params.name, req.params.arguments ?? {}));
+    this.server.setRequestHandler(CallToolRequestSchema, (req, extra) => this.callTool(req.params.name, req.params.arguments ?? {}, extra.signal));
     // One ledger session per client `initialize`, with the client's identity captured.
     this.server.oninitialized = () => this.openSession("initialize");
     this.log(`sagaz: proxying ${this.routes.size} tool(s) from ${this.downstreams.map((d) => d.name).join(", ")}`);
@@ -204,7 +204,7 @@ export class SagazProxy {
     }
   }
 
-  private async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+  private async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<CallToolResult> {
     const route = this.routes.get(name);
     if (!route) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
     const downstream = this.downstreams.find((d) => d.name === route.server);
@@ -230,7 +230,7 @@ export class SagazProxy {
         : undefined;
 
     if (verdict.action !== "allow") {
-      const stopped = await this.gate(route, effectId, classification, verdict);
+      const stopped = await this.gate(route, effectId, classification, verdict, signal);
       if (stopped) return stopped;
     }
 
@@ -253,7 +253,13 @@ export class SagazProxy {
    * The reply carries the gate metadata in `_meta.sagaz`, so what the ledger stores as
    * result_json is exactly what the agent received — one source of truth for "why".
    */
-  private async gate(route: Route, effectId: string | undefined, classification: Classification, verdict: PolicyVerdict): Promise<CallToolResult | undefined> {
+  private async gate(
+    route: Route,
+    effectId: string | undefined,
+    classification: Classification,
+    verdict: PolicyVerdict,
+    signal: AbortSignal | undefined,
+  ): Promise<CallToolResult | undefined> {
     const base = { tool: route.downstreamName, server: route.server, class: classification.class, policy: verdict.reason };
     const stop = (outcome: GateOutcome, extra: { approvalId?: string; decidedBy?: string | null; waitedMs?: number } = {}) => {
       const result = gateResult({ ...base, outcome, decidedBy: extra.decidedBy, waitedMs: extra.waitedMs }, { gate: outcome, class: base.class, policy: base.policy, ...extra });
@@ -270,17 +276,31 @@ export class SagazProxy {
       this.log(`sagaz: confirm gate on ${route.downstreamName} but no ledger to coordinate an approval — treating as blocked`);
       return stop("blocked");
     }
-    const approval = this.ledger.requestApproval(effectId);
-    const timeoutMs = this.config.policy.confirmTimeoutMs;
-    this.log(`sagaz: holding ${route.downstreamName} for confirmation (${base.class}; ${verdict.reason}) — sagaz approve ${effectId.slice(-8)}`);
+    // Any failure of the approval channel itself is a stop, never a pass: the row must close
+    // (everything is recorded) and "confirm" must not silently become "allow".
+    let approvalId: string | undefined;
     const started = Date.now();
-    const decided = await this.ledger.waitForDecision(approval.id, { timeoutMs, ...(this.approvalPollMs !== undefined ? { pollMs: this.approvalPollMs } : {}) });
-    if (decided.decision === "allow") {
-      this.log(`sagaz: ${route.downstreamName} approved by ${decided.decided_by ?? "?"}`);
-      return undefined;
+    try {
+      approvalId = this.ledger.requestApproval(effectId).id;
+      const timeoutMs = this.config.policy.confirmTimeoutMs;
+      // The 8-char suffix is the operator's handle: what `sagaz pending`/`ledger` print and what `sagaz approve` resolves.
+      this.log(`sagaz: holding ${route.downstreamName} for confirmation (${base.class}; ${verdict.reason}) — sagaz approve ${effectId.slice(-8)}`);
+      const decided = await this.ledger.waitForDecision(approvalId, {
+        timeoutMs,
+        ...(this.approvalPollMs !== undefined ? { pollMs: this.approvalPollMs } : {}),
+        ...(signal ? { signal } : {}),
+      });
+      if (decided.decision === "allow") {
+        this.log(`sagaz: ${route.downstreamName} approved by ${decided.decided_by ?? "?"}`);
+        return undefined;
+      }
+      if (decided.decided_by === "timeout") return stop("timeout", { approvalId, decidedBy: "timeout", waitedMs: Date.now() - started });
+      if (decided.decided_by === "cancelled") return stop("cancelled", { approvalId, decidedBy: "cancelled", waitedMs: Date.now() - started });
+      return stop("denied", { approvalId, decidedBy: decided.decided_by });
+    } catch (err) {
+      this.log(`sagaz: approval channel failed for ${route.downstreamName}: ${err instanceof Error ? err.message : String(err)} — treating as blocked`);
+      return stop("blocked", { ...(approvalId !== undefined ? { approvalId } : {}) });
     }
-    if (decided.decided_by === "timeout") return stop("timeout", { approvalId: approval.id, decidedBy: "timeout", waitedMs: Date.now() - started });
-    return stop("denied", { approvalId: approval.id, decidedBy: decided.decided_by });
   }
 }
 

@@ -245,6 +245,24 @@ describe("approvals (confirm gates)", () => {
     }
   });
 
+  it("an approval whose effect already closed (proxy gone) cannot be decided and is not listed", () => {
+    const { effectId, approvalId } = held();
+    ledger.end(effectId, { status: "blocked", result: {} });
+    expect(ledger.listPendingApprovals()).toEqual([]);
+    expect(() => ledger.decide(approvalId, "allow", "jero")).toThrow(/Nobody is waiting: the held call already closed \(blocked\)/);
+    expect(ledger.getApproval(approvalId)?.decided_at).toBeNull();
+  });
+
+  it("waitForDecision honours an abort signal: deny by 'cancelled', wakes up before the poll interval", async () => {
+    const { approvalId } = held();
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const t0 = Date.now();
+    const row = await ledger.waitForDecision(approvalId, { timeoutMs: 10_000, pollMs: 5_000, signal: controller.signal });
+    expect(row).toMatchObject({ decision: "deny", decided_by: "cancelled" });
+    expect(Date.now() - t0).toBeLessThan(1_000);
+  });
+
   it("mustExist refuses to create a ledger; readonly ledgers without the table report nothing pending", () => {
     expect(() => new Ledger(join(dir, "missing.db"), { mustExist: true })).toThrow(/No ledger at/);
     const raw = new Database(join(dir, "old.db"));

@@ -45,7 +45,7 @@ export function clientLabel(clientInfo: string | null): string {
   return c.name ? `${c.name} ${c.version ?? ""}`.trimEnd() : "-";
 }
 
-/** For `pending` / `approve` / `deny`: writes the approvals table only, never creates a ledger. */
+/** For `approve` / `deny`: writes the approvals table only, never creates a ledger. */
 export async function openWritableLedger(configPath: string): Promise<Ledger> {
   const config = await loadConfig(configPath);
   return new Ledger(config.ledger.path, { mustExist: true });

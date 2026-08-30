@@ -107,7 +107,7 @@ Approvals travel through the ledger (`approvals` table — `docs/T0-recon-y-sche
 
 ### What the agent sees
 
-A gate speaks; it does not moo. Every stopped call comes back as a tool result with **`isError: true`** (the action did *not* happen, and the model must know it) and a text written to be read by an LLM: what was stopped, why (class + policy), that it must not retry, that the operator knows, and what it can do instead. The gate metadata (`gate`, `class`, `policy`, `approvalId`, `decidedBy`, `waitedMs`) travels in `_meta.sagaz`, so `result_json` in the ledger is exactly what the agent received. Source: `src/policy/templates.ts`.
+A gate speaks; it does not moo. Every stopped call comes back as a tool result with **`isError: true`** (the action did *not* happen, and the model must know it) and a text written to be read by an LLM: what was stopped, why (class + policy), that it must not retry, that the operator knows, and what it can do instead. The gate metadata (`gate`, `class`, `policy`, `approvalId`, `decidedBy`, `waitedMs`) travels in `_meta.sagaz`, so `result_json` in the ledger is exactly what the agent received. Source: `src/policy/templates.ts`. (A fourth outcome, `cancelled`, closes the row when the agent cancels or disconnects while held — nobody reads that reply, and a later `sagaz approve` is refused.)
 
 **Blocked by policy**
 
@@ -115,7 +115,7 @@ A gate speaks; it does not moo. Every stopped call comes back as a tool result w
 Sagaz blocked this call before it reached the server. `transfer_funds` on server "bank" was NOT executed and nothing changed.
 Reason: this tool is classified I (irreversible); policy.class I → block.
 Do not retry this call and do not try to achieve the same effect another way — the policy will block it again.
-The operator has been notified: the attempt is recorded in the Sagaz effect ledger. You may continue with other tasks that do not depend on this action, or report this to the user.
+The attempt is recorded in the Sagaz effect ledger for the operator to see. You may continue with other tasks that do not depend on this action, or report this to the user.
 ```
 
 **Held, then denied by the operator**
@@ -133,5 +133,5 @@ The operator already knows about this attempt; it is recorded in the Sagaz effec
 Sagaz held this call for operator confirmation and no decision arrived within 120s, so it is treated as denied. `transfer_funds` on server "bank" was NOT executed and nothing changed.
 Reason: this tool is classified I (irreversible); default policy: class I → confirm.
 Do not retry this call — a retry would wait again and the policy is unchanged.
-The operator has been notified: the attempt is recorded in the Sagaz effect ledger and can be re-run by them. You may continue with other tasks that do not depend on this action, or report this to the user.
+The attempt is recorded in the Sagaz effect ledger for the operator to see. You may continue with other tasks that do not depend on this action, or report this to the user.
 ```

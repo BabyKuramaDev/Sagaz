@@ -306,7 +306,40 @@ describe("gates over a real toybox", () => {
       expect(gateMeta(result)).toMatchObject({ gate: "timeout", decidedBy: "timeout" });
       expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$0.00");
       expect(t.operator.listPendingApprovals()).toEqual([]);
-      expect(t.ledger.listEffects(t.proxy.currentSessionId as string).map((r) => r.status)).toEqual(["blocked"]);
+      const sid = t.proxy.currentSessionId as string;
+      expect(t.ledger.listEffects(sid).map((r) => r.status)).toEqual(["blocked"]);
+      expect(t.ledger.verifySession(sid)).toMatchObject({ ok: true });
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("agent cancels while held → closed as blocked/cancelled, and a later approve is refused (nothing runs)", async () => {
+    const t = await setup(undefined);
+    try {
+      const controller = new AbortController();
+      const call = t.client.callTool({ name: "transfer_funds", arguments: transfer }, undefined, { signal: controller.signal });
+      let pending = t.operator.listPendingApprovals();
+      for (let i = 0; i < 100 && pending.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        pending = t.operator.listPendingApprovals();
+      }
+      expect(pending).toHaveLength(1);
+      controller.abort();
+      await expect(call).rejects.toThrow();
+
+      const sid = t.proxy.currentSessionId as string;
+      let rows = t.ledger.listEffects(sid);
+      for (let i = 0; i < 100 && rows[0]?.status === "pending"; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+        rows = t.ledger.listEffects(sid);
+      }
+      expect(rows.map((r) => r.status)).toEqual(["blocked"]);
+      expect(JSON.parse(rows[0]!.result_json ?? "")).toMatchObject({ _meta: { sagaz: { gate: "cancelled", decidedBy: "cancelled" } } });
+      expect(t.operator.listPendingApprovals()).toEqual([]);
+      expect(() => t.operator.decide(pending[0]!.id, "allow", "jero")).toThrow(/Already decided: deny by cancelled/);
+      expect(balance(toyboxCli(t.db, "inspect"), "acc-vendor")).toBe("$0.00");
+      expect(t.ledger.verifySession(sid)).toMatchObject({ ok: true });
     } finally {
       await t.close();
     }

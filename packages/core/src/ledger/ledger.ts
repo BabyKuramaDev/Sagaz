@@ -287,14 +287,15 @@ export class Ledger {
   //
   // Cross-process by design: the proxy inserts the request and polls; `sagaz approve/deny`
   // (another process, its own connection) writes the decision. SQLite in WAL mode gives every
-  // poll a fresh read snapshot, so a committed decision is seen on the next tick. Approvals
-  // never touch `effects`, so the one-writer-per-chain invariant of tail() still holds.
+  // poll a fresh read snapshot, so a committed decision is seen on the next tick. Approvals only
+  // READ `effects` (the FK and the pending check) and never write it, so the one-writer-per-chain
+  // invariant of tail() still holds.
 
   /** Opens an approval for a pending effect. Returns the row (id is the operator's handle). */
   requestApproval(effectId: string): ApprovalRow {
     const effect = this.get(effectId);
-    if (!effect) throw new Error(`Effect ${effectId} not found`);
-    if (effect.status !== "pending") throw new Error(`Effect ${effectId} is already closed (${effect.status})`);
+    if (!effect) throw new ApprovalError(`Effect ${effectId} not found`);
+    if (effect.status !== "pending") throw new ApprovalError(`Effect ${effectId} is already closed (${effect.status})`);
     const id = ulid();
     this.db.prepare("INSERT INTO approvals (id, effect_id, requested_at) VALUES (?, ?, ?)").run(id, effectId, this.now());
     return this.getApproval(id) as ApprovalRow;
@@ -324,7 +325,7 @@ export class Ledger {
       .prepare(
         `SELECT a.*, e.session_id, e.server, e.tool, e.args_json, e.class, e.class_reason
          FROM approvals a JOIN effects e ON e.id = a.effect_id
-         WHERE a.decided_at IS NULL ORDER BY a.id`,
+         WHERE a.decided_at IS NULL AND e.status = 'pending' ORDER BY a.id`,
       )
       .all() as PendingApproval[];
   }
@@ -332,8 +333,16 @@ export class Ledger {
   /**
    * Records a decision. Atomic on `decided_at IS NULL`: if two parties race (operator vs.
    * timeout), exactly one wins and the other gets an ApprovalError carrying the standing decision.
+   * Refused when the held effect is no longer pending (the proxy died mid-hold, or already
+   * closed it): an approval nobody will consume must not print "approved".
    */
   decide(id: string, decision: ApprovalDecision, decidedBy: string): ApprovalRow {
+    const open = this.getApproval(id);
+    if (!open) throw new ApprovalError(`Approval ${id} not found`);
+    const effect = this.get(open.effect_id);
+    if (open.decided_at === null && effect && effect.status !== "pending") {
+      throw new ApprovalError(`Nobody is waiting: the held call already closed (${effect.status}) — the proxy holding it is gone`);
+    }
     const info = this.db
       .prepare("UPDATE approvals SET decided_at = ?, decision = ?, decided_by = ? WHERE id = ? AND decided_at IS NULL")
       .run(this.now(), decision, decidedBy, id);
@@ -344,26 +353,30 @@ export class Ledger {
   }
 
   /**
-   * Waits for a decision by polling. On timeout it writes `deny` by 'timeout' itself — so
-   * `sagaz pending` stops listing the call and a late `sagaz approve` is refused rather than
-   * silently ignored. If the operator wins the race at the last instant, their decision stands.
+   * Waits for a decision by polling. On timeout — or when `signal` aborts because the agent
+   * cancelled the request or disconnected — it writes `deny` itself (by 'timeout' / 'cancelled'),
+   * so `sagaz pending` stops listing the call and a late `sagaz approve` is refused rather than
+   * forwarding a call nobody is waiting for. If the operator wins the race at the last instant,
+   * their decision stands.
    */
-  async waitForDecision(id: string, opts: { timeoutMs: number; pollMs?: number }): Promise<ApprovalRow> {
+  async waitForDecision(id: string, opts: { timeoutMs: number; pollMs?: number; signal?: AbortSignal }): Promise<ApprovalRow> {
     const pollMs = opts.pollMs ?? 250;
     const deadline = Date.now() + opts.timeoutMs;
+    const settle = (by: "timeout" | "cancelled"): ApprovalRow => {
+      try {
+        return this.decide(id, "deny", by);
+      } catch (err) {
+        if (err instanceof ApprovalError) return this.getApproval(id) as ApprovalRow;
+        throw err;
+      }
+    };
     for (;;) {
       const row = this.getApproval(id);
-      if (!row) throw new Error(`Approval ${id} not found`);
+      if (!row) throw new ApprovalError(`Approval ${id} not found`);
       if (row.decided_at !== null) return row;
-      if (Date.now() >= deadline) {
-        try {
-          return this.decide(id, "deny", "timeout");
-        } catch (err) {
-          if (err instanceof ApprovalError) return this.getApproval(id) as ApprovalRow;
-          throw err;
-        }
-      }
-      await new Promise((r) => setTimeout(r, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
+      if (opts.signal?.aborted) return settle("cancelled");
+      if (Date.now() >= deadline) return settle("timeout");
+      await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())), opts.signal);
     }
   }
 
@@ -419,4 +432,18 @@ export class Ledger {
     if (chain.length !== closed.length) return { ok: false, reason: `${closed.length - chain.length} closed effect(s) unreachable from genesis`, chain };
     return { ok: true, chain };
   }
+}
+
+/** setTimeout that also wakes up early when `signal` aborts (never rejects). */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }

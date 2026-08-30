@@ -76,7 +76,11 @@ export function gateReason(r: EffectRow): string {
   try {
     const meta = (JSON.parse(r.result_json) as { _meta?: { sagaz?: GateMeta } })._meta?.sagaz;
     if (!meta) return "blocked";
-    const who = meta.gate === "denied" ? `denied by ${meta.decidedBy ?? "operator"}` : meta.gate === "timeout" ? "no answer in time" : "blocked";
+    const who =
+      meta.gate === "denied" ? `denied by ${meta.decidedBy ?? "operator"}`
+      : meta.gate === "timeout" ? "no answer in time"
+      : meta.gate === "cancelled" ? "caller cancelled while held"
+      : "blocked";
     return `${who} — ${meta.policy}`;
   } catch {
     return "blocked";
