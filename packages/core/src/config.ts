@@ -91,6 +91,12 @@ const ConfigSchema = z.object({
   ledger: LedgerConfigSchema.default({ path: DEFAULT_LEDGER_PATH, maxResultBytes: DEFAULT_MAX_RESULT_BYTES }),
   rules: z.array(ClassificationRuleSchema).default([]),
   policy: PolicySchema.default({ class: {}, tools: [], confirmTimeoutMs: DEFAULT_CONFIRM_TIMEOUT_MS }),
+  /**
+   * Effect preview: run the whole session dry. Reads are forwarded; every mutation (and every
+   * `unknown`) is classified, recorded as `status = 'dry'` and answered without ever reaching the
+   * downstream. Equivalent to `sagaz serve --preview`. See proxy.ts for the exact rule.
+   */
+  preview: z.boolean().default(false),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;

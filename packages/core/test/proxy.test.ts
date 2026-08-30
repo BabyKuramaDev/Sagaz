@@ -194,6 +194,26 @@ describe("sagaz bin end to end (stdio both sides)", () => {
     }
   });
 
+  it("`sagaz serve --preview` runs the session dry and says so in the instructions", async () => {
+    const cfg = join(dir, "sagaz.config.json");
+    const db = join(dir, "world.db");
+    toyboxCli(db, "seed");
+    writeFileSync(cfg, JSON.stringify({ servers: { toybox: toybox(db) }, ledger: { path: "ledger.db" } }));
+    const client = new Client({ name: "e2e", version: "0.0.0" });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [SAGAZ_BIN, "serve", "--preview", "--config", cfg], stderr: "pipe" }));
+    try {
+      expect(client.getInstructions()).toContain("Sagaz preview mode is active");
+      const moved = (await client.callTool({ name: "transfer_funds", arguments: { from_account: "acc-payroll", to_account: "acc-vendor", amount_cents: 1 } })) as CallToolResult;
+      expect(text(moved)).toContain("recorded but NOT executed");
+      expect(toyboxCli(db, "inspect")).toContain("TRANSFERS (0)");
+    } finally {
+      await client.close();
+    }
+    const ledger = new Ledger(join(dir, "ledger.db"), { readonly: true });
+    expect(ledger.listEffects(ledger.lastSession()!.id).map((r) => [r.tool, r.status])).toEqual([["transfer_funds", "dry"]]);
+    ledger.close();
+  });
+
   it("exits 1 with the collision message (and does not hang) when downstreams collide", async () => {
     const cfg = join(dir, "collide.json");
     writeFileSync(cfg, JSON.stringify({ servers: { one: toybox(join(dir, "a.db")), two: toybox(join(dir, "b.db")) } }));
@@ -387,6 +407,141 @@ describe("gates over a real toybox", () => {
     } finally {
       await client.close();
       await proxy.close();
+    }
+  });
+});
+
+describe("preview over a real toybox (sagaz serve --preview)", () => {
+  const transfer = { from_account: "acc-payroll", to_account: "acc-vendor", amount_cents: 250_000 };
+  const meta = (r: CallToolResult) => (r._meta as { sagaz: Record<string, unknown> }).sagaz;
+
+  async function setup(extra: Record<string, unknown> = {}, opts: { preview?: boolean } = { preview: true }) {
+    const db = join(dir, "world.db");
+    toyboxCli(db, "seed");
+    const ledger = new Ledger(join(dir, "ledger.db"));
+    const proxy = new SagazProxy(parseConfig({ servers: { toybox: toybox(db) }, ...extra }), { log: () => {}, ledger, approvalPollMs: 10, ...opts });
+    await proxy.start();
+    const client = await connectClient(proxy);
+    const close = async () => {
+      await client.close();
+      await proxy.close();
+      ledger.close();
+    };
+    return { db, ledger, proxy, client, close };
+  }
+
+  it("reads are forwarded, every mutation and unknown runs dry, I never waits, the chain holds and the world is virgin", async () => {
+    const t = await setup();
+    const before = toyboxCli(t.db, "inspect");
+    try {
+      expect(t.proxy.isPreview).toBe(true);
+      expect(t.client.getInstructions()).toContain("Sagaz preview mode is active");
+
+      // Reads reach the world — an annotated one and one the heuristics have to infer.
+      const contacts = (await t.client.callTool({ name: "list_contacts", arguments: {} })) as CallToolResult;
+      expect(JSON.parse(text(contacts))).toHaveLength(3);
+      expect(contacts._meta).toBeUndefined();
+      const timeline = (await t.client.callTool({ name: "list_timeline", arguments: {} })) as CallToolResult;
+      expect(JSON.parse(text(timeline))[0].text).toBe("Hello world, we are live!");
+
+      // R and C: spoken, not executed, not an error (the agent keeps planning).
+      const created = (await t.client.callTool({ name: "create_contact", arguments: { name: "Alan Turing", email: "alan@bletchley.uk" } })) as CallToolResult;
+      expect(created.isError).toBeFalsy();
+      expect(text(created)).toContain("Preview mode: this call was recorded but NOT executed. `create_contact` on server \"toybox\" did not run and nothing changed.");
+      expect(text(created)).toContain("It would have been classified R (reversible); outside preview it would have run.");
+      expect(text(created)).toContain("nothing you do in this session reaches the real world");
+      expect(meta(created)).toEqual({ preview: true, class: "R", wouldHave: "allow", policy: "default policy: class R → allow" });
+      const sent = (await t.client.callTool({ name: "send_email", arguments: { to: "alan@bletchley.uk", subject: "Welcome", body: "Hi" } })) as CallToolResult;
+      expect(meta(sent)).toMatchObject({ preview: true, class: "C", wouldHave: "allow" });
+
+      // I: dry, not pending — no approval is opened, nobody waits, the guardian is reported, not applied.
+      const moved = (await t.client.callTool({ name: "transfer_funds", arguments: transfer })) as CallToolResult;
+      expect(text(moved)).toContain("It would have been classified I (irreversible); outside preview it would have waited for the operator's approval.");
+      expect(meta(moved)).toMatchObject({ preview: true, class: "I", wouldHave: "confirm", policy: "default policy: class I → confirm" });
+      expect(t.ledger.listPendingApprovals()).toEqual([]);
+
+      // unknown: when in doubt, dry.
+      const deleted = (await t.client.callTool({ name: "delete_contact", arguments: { id: 1 } })) as CallToolResult;
+      expect(text(deleted)).toContain("It would have been classified unknown reversibility");
+      expect(meta(deleted)).toMatchObject({ preview: true, class: "unknown" });
+
+      const sid = t.proxy.currentSessionId as string;
+      const rows = t.ledger.listEffects(sid);
+      expect(rows.map((r) => [r.tool, r.class, r.status])).toEqual([
+        ["list_contacts", "read", "ok"], ["list_timeline", "read", "ok"], ["create_contact", "R", "dry"],
+        ["send_email", "C", "dry"], ["transfer_funds", "I", "dry"], ["delete_contact", "unknown", "dry"],
+      ]);
+      expect(rows.filter((r) => r.status === "pending")).toEqual([]);
+      // Dry rows are chained like any other: what the agent was told is what the ledger stores.
+      expect(JSON.parse(rows[4]!.result_json ?? "")).toMatchObject({ isError: false, _meta: { sagaz: { preview: true, class: "I", wouldHave: "confirm" } } });
+      const verified = t.ledger.verifySession(sid);
+      expect(verified).toMatchObject({ ok: true });
+      expect(verified.chain).toHaveLength(6);
+
+      // The world, checked against the toybox's own DB: byte-for-byte what `seed` left.
+      const after = toyboxCli(t.db, "inspect");
+      expect(after).toBe(before);
+      expect(after).toContain("CONTACTS (3)");
+      expect(after).not.toContain("Alan Turing");
+      expect(after).toContain("EMAILS SENT (1)");
+      expect(after).toContain("TRANSFERS (0)");
+      expect(after).toMatch(/acc-vendor\s+Vendor Escrow\s+\$0\.00/);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("the policy does not run in preview: a block rule and a confirm class both end dry, and are reported as what they would have done", async () => {
+    const t = await setup({ policy: { class: { unknown: "confirm" }, tools: [{ tool: "send_*", action: "block", reason: "no outbound mail" }] } });
+    try {
+      const sent = (await t.client.callTool({ name: "send_email", arguments: { to: "x@y.z", subject: "s", body: "b" } })) as CallToolResult;
+      expect(sent.isError).toBeFalsy();
+      expect(text(sent)).toContain("outside preview the policy would have blocked it");
+      expect(meta(sent)).toMatchObject({ preview: true, wouldHave: "block", policy: "no outbound mail" });
+      const deleted = (await t.client.callTool({ name: "delete_contact", arguments: { id: 1 } })) as CallToolResult;
+      expect(meta(deleted)).toMatchObject({ preview: true, class: "unknown", wouldHave: "confirm" });
+      expect(t.ledger.listPendingApprovals()).toEqual([]);
+      expect(t.ledger.listEffects(t.proxy.currentSessionId as string).map((r) => r.status)).toEqual(["dry", "dry"]);
+      expect(toyboxCli(t.db, "inspect")).toContain("CONTACTS (3)");
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("`\"preview\": true` in the config is the same switch; a user rule that says read is trusted (documented edge)", async () => {
+    const t = await setup({ preview: true, rules: [{ tool: "post_tweet", class: "read", reason: "lying on purpose" }] }, {});
+    try {
+      expect(t.proxy.isPreview).toBe(true);
+      const moved = (await t.client.callTool({ name: "transfer_funds", arguments: transfer })) as CallToolResult;
+      expect(meta(moved)).toMatchObject({ preview: true, class: "I" });
+      // The cascade decides what a read is; a rule that misclassifies a mutation as read lets it through.
+      const tweeted = (await t.client.callTool({ name: "post_tweet", arguments: { text: "oops" } })) as CallToolResult;
+      expect(tweeted._meta).toBeUndefined();
+      expect(toyboxCli(t.db, "inspect")).toContain("oops");
+      expect(toyboxCli(t.db, "inspect")).toContain("TRANSFERS (0)");
+      // The annotation path of the same edge: delete_contact carries destructiveHint (not readOnlyHint),
+      // so the annotation level does not make it a read and it stays dry; list_inbox's readOnlyHint does.
+      const deleted = (await t.client.callTool({ name: "delete_contact", arguments: { id: 1 } })) as CallToolResult;
+      expect(meta(deleted)).toMatchObject({ preview: true, class: "unknown" });
+      const inbox = (await t.client.callTool({ name: "list_inbox", arguments: {} })) as CallToolResult;
+      expect(inbox._meta).toBeUndefined();
+      expect(t.ledger.listEffects(t.proxy.currentSessionId as string).map((r) => [r.tool, r.class_source, r.status])).toEqual([
+        ["transfer_funds", "rule", "dry"], ["post_tweet", "user", "ok"], ["delete_contact", "rule", "dry"], ["list_inbox", "annotation", "ok"],
+      ]);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("without preview nothing changes: the same call runs for real", async () => {
+    const t = await setup({ policy: NO_GATES }, {});
+    try {
+      expect(t.proxy.isPreview).toBe(false);
+      const c = (await t.client.callTool({ name: "create_contact", arguments: { name: "Alan Turing", email: "alan@bletchley.uk" } })) as CallToolResult;
+      expect(c._meta).toBeUndefined();
+      expect(toyboxCli(t.db, "inspect")).toContain("Alan Turing");
+    } finally {
+      await t.close();
     }
   });
 });

@@ -8,7 +8,7 @@ The goal: one undo for everything your agent touched — including what no snaps
 
 ## Status
 
-Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and **Phase 1 is in progress**: every call is classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Since T8 Sagaz also *gates*: by default an irreversible call is held until you approve it from another terminal, and you can block or confirm any class or tool by policy. No preview, no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
+Pre-alpha, not on npm yet. **Phase 0 is complete** (a transparent stdio MCP proxy, a hash-chained effect ledger, a read-only CLI) and so is **Phase 1**: every call is classified R/C/I before it is forwarded — from your rules, MCP annotations or conservative name heuristics — and the class is sealed into the ledger. Since T8 Sagaz also *gates*: by default an irreversible call is held until you approve it from another terminal, and you can block or confirm any class or tool by policy. Since T9 there is *preview*: run the whole session dry and get a report of what the agent would have done to the world. That completes Phase 1; no undo yet. See [`SPEC.md`](SPEC.md) for the vision, architecture and roadmap (in Spanish, as is [`docs/T0-recon-y-schema.md`](docs/T0-recon-y-schema.md), the ledger design and its frozen schema).
 
 ## Quickstart
 
@@ -41,6 +41,8 @@ sagaz status                     # sessions, ledger location, overall state
 sagaz verify                     # walk the hash chain of a session and report OK or the first break
 sagaz pending                    # calls held by a confirm gate, waiting for you
 sagaz approve <id> | deny <id>   # decide; the agent gets the real result, or a message saying nothing ran
+sagaz serve --preview            # run the session dry: reads work, mutations are recorded and NOT executed
+sagaz preview-report             # what a dry session would have done to the world
 ```
 
 Real output, unedited (the toybox reel through Sagaz):
@@ -68,6 +70,38 @@ OK 6 effect(s) chained
 ```
 
 Colour is used only on a TTY and honours [`NO_COLOR`](https://no-color.org).
+
+## Preview: run the agent dry
+
+`sagaz serve --preview` (or `"preview": true` in `sagaz.config.json`) runs the whole session without touching the world. Read-only calls are forwarded — a blind agent cannot plan — and every other call is classified, recorded with `status = 'dry'` and answered with a note written for an LLM: *recorded but NOT executed, would have been classified C, keep planning, nothing in this session reaches the real world*. The policy is evaluated but not applied in preview (nothing executes, so there is nothing to confirm); what it *would* have done is recorded instead. Dry effects are hashed into the chain like everything else — a plan is auditable history, the "what it meant to do" you later compare with "what it did".
+
+Real output, unedited — the toybox reel through `sagaz serve --preview`, the world seeded and then inspected: three contacts, one email, `$0.00` in escrow, zero transfers, before and after.
+
+```
+$ sagaz preview-report
+preview report — session 01M1809Z4TH62627ARRMVBXFMS  (2026-08-30 00:14:59Z, reel 1.0.0)
+Nothing reached the world. 7 call(s): 2 read(s) executed, 5 recorded dry.
+
+what would have happened
+  I        1  transfer_funds
+              irreversible: no way back once executed; it would have waited for your approval
+  C        2  send_email ×2
+              compensable: cannot be undone, only corrected afterwards; all would have run without asking
+  R        1  create_contact
+              reversible: a deterministic inverse exists; it would have run without asking
+  unknown  1  delete_contact
+              reversibility unknown: no rule, annotation or heuristic decided; it would have run without asking
+
+seq  tool            server  class    outside preview          args
+───  ──────────────  ──────  ───────  ───────────────────────  ────────────────────────────────────────────────
+  3  create_contact  toybox  R        would run                name=Alan Turing, email=alan@bletchley.uk
+  4  send_email      toybox  C        would run                to=alan@bletchley.uk, subject=Welcome, body=Hi
+  5  send_email      toybox  C        would run                to=ada@example.com, subject=Hello again, body=Hi
+  6  transfer_funds  toybox  I        would wait for approval  from_account=acc-payroll, to_account=acc-vendor…
+  7  delete_contact  toybox  unknown  would run                id=1
+```
+
+`sagaz ledger` shows the same rows with `dry` in magenta and a `preview` column. The honest edge: what counts as a read is decided by the classifier's cascade (your rules › MCP annotations › name heuristics), so a mutating tool that lies with `readOnlyHint: true` — or that you misclassify with a rule — *would* run in preview. That is why `unknown` is never forwarded: when in doubt, dry.
 
 ## Gates: the guardian
 

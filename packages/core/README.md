@@ -135,3 +135,32 @@ Reason: this tool is classified I (irreversible); default policy: class I → co
 Do not retry this call — a retry would wait again and the policy is unchanged.
 The attempt is recorded in the Sagaz effect ledger for the operator to see. You may continue with other tasks that do not depend on this action, or report this to the user.
 ```
+
+## Preview: the session runs dry
+
+`sagaz serve --preview`, or `"preview": true` in the config (`ProxyOptions.preview` in code), turns the whole session into an *effect preview*. It is a session mode, not a per-tool one: run the agent end to end, touch nothing, keep the ledger.
+
+| Class (by the full cascade) | In preview |
+|---|---|
+| `read` | forwarded as usual — the agent must be able to see the world to plan anything |
+| `R`, `C`, `I`, `unknown` | classified, recorded as `status = 'dry'`, answered with the note below, **never forwarded** |
+
+The policy is evaluated but not applied in preview: nothing executes, so there is nothing to confirm or block, and an `I` call closes as `dry` — never `pending`, never waiting. The verdict travels with the reply as `_meta.sagaz.wouldHave` (`allow` | `confirm` | `block`) and its reason as `_meta.sagaz.policy`, so `sagaz preview-report` can say "would have waited for your approval". Dry rows are hashed and chained like any other effect.
+
+**The honest edge.** "Read" is whatever the cascade says: a mutating tool that declares `readOnlyHint: true`, or one your rules misclassify as `read`, *is* forwarded in preview. Sagaz cannot know better than its classifier. That is exactly why `unknown` is treated as a mutation: when in doubt, dry.
+
+### What the agent sees in preview
+
+At `initialize`, prepended to the downstream instructions:
+
+```
+Sagaz preview mode is active: read-only tools work normally, but every tool call that would change something is recorded and NOT executed. Plan and act as you normally would; each such call answers with a note saying it was recorded but did not run. Nothing in this session reaches the real world.
+```
+
+For every dry call, as a tool result with **`isError: false`** — the agent is planning, and a plan is what preview wants; the text makes sure it does not believe anything happened. Metadata `{ preview: true, class, wouldHave, policy }` in `_meta.sagaz`, hence in `result_json`. Source: `src/policy/templates.ts`.
+
+```
+Preview mode: this call was recorded but NOT executed. `transfer_funds` on server "bank" did not run and nothing changed.
+It would have been classified I (irreversible); outside preview it would have waited for the operator's approval.
+Continue planning as if it had succeeded — nothing you do in this session reaches the real world. Do not retry it; the operator will review what you would have done.
+```

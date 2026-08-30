@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIRM_TIMEOUT_MS, parseConfig } from "../src/config.js";
-import { evaluatePolicy, gateMessage, gateResult } from "../src/policy/index.js";
+import { PREVIEW_INSTRUCTIONS, evaluatePolicy, gateMessage, gateResult, previewMessage, previewResult } from "../src/policy/index.js";
 
 const servers = { bank: { command: "x" } };
 
@@ -84,5 +84,27 @@ describe("gate templates", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0]).toMatchObject({ type: "text" });
     expect(r._meta).toEqual({ sagaz: { gate: "blocked", class: "I", policy: base.policy } });
+  });
+});
+
+describe("preview", () => {
+  it("config: off by default, `preview: true` switches it on, anything else is rejected", () => {
+    expect(parseConfig({ servers }).preview).toBe(false);
+    expect(parseConfig({ servers, preview: true }).preview).toBe(true);
+    expect(() => parseConfig({ servers, preview: "yes" })).toThrow(/preview/);
+  });
+
+  it("template: recorded not executed, the class, what the policy would have done, keep planning, do not retry — and it is not an error", () => {
+    const ctx = { tool: "send_email", server: "mail", class: "C" as const, wouldHave: "allow" as const };
+    const msg = previewMessage(ctx);
+    expect(msg).toContain("Preview mode: this call was recorded but NOT executed. `send_email` on server \"mail\" did not run and nothing changed.");
+    expect(msg).toContain("It would have been classified C (compensable, cannot be undone automatically); outside preview it would have run.");
+    expect(msg).toContain("Continue planning as if it had succeeded — nothing you do in this session reaches the real world. Do not retry it");
+    expect(previewMessage({ ...ctx, class: "I", wouldHave: "confirm" })).toContain("outside preview it would have waited for the operator's approval");
+    expect(previewMessage({ ...ctx, wouldHave: "block" })).toContain("outside preview the policy would have blocked it");
+    const result = previewResult(ctx, { preview: true, class: "C", wouldHave: "allow", policy: "default policy: class C → allow" });
+    expect(result.isError).toBe(false);
+    expect(result._meta).toEqual({ sagaz: { preview: true, class: "C", wouldHave: "allow", policy: "default policy: class C → allow" } });
+    expect(PREVIEW_INSTRUCTIONS).toContain("recorded and NOT executed");
   });
 });
