@@ -28,7 +28,7 @@ afterEach(async () => {
 });
 
 const EXPECTED_TOOLS = [
-  "list_contacts", "create_contact", "update_contact", "delete_contact",
+  "list_contacts", "get_contact", "create_contact", "update_contact", "delete_contact",
   "send_email", "list_inbox", "post_tweet", "delete_tweet", "list_timeline",
   "list_accounts", "transfer_funds",
 ];
@@ -47,6 +47,7 @@ describe("toybox MCP server", () => {
     expect(tools.map((t) => t.name).sort()).toEqual([...EXPECTED_TOOLS].sort());
     const byName = Object.fromEntries(tools.map((t) => [t.name, t.annotations]));
     expect(byName["list_contacts"]?.readOnlyHint).toBe(true);
+    expect(byName["get_contact"]?.readOnlyHint).toBe(true);
     expect(byName["delete_contact"]?.destructiveHint).toBe(true);
     expect(byName["delete_tweet"]?.destructiveHint).toBe(true);
     expect(byName["list_inbox"]?.readOnlyHint).toBe(true);

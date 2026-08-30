@@ -47,10 +47,20 @@ export function createToyboxServer(world: World, opts: { version?: string } = {}
   );
 
   server.registerTool(
+    "get_contact",
+    {
+      description: "Fetch a single CRM contact by id.",
+      inputSchema: { id: z.number().int().positive() },
+      annotations: { readOnlyHint: true },
+    },
+    tool(({ id }) => world.getContact(id)),
+  );
+
+  server.registerTool(
     "create_contact",
     {
-      description: "Create a CRM contact. Email must be unique.",
-      inputSchema: { name: z.string().min(1), email: z.string().email(), company: z.string().optional() },
+      description: "Create a CRM contact. Email must be unique. company may be null (no company).",
+      inputSchema: { name: z.string().min(1), email: z.string().email(), company: z.string().nullable().optional() },
       // no annotations on purpose
     },
     tool((a) => world.createContact(a)),
