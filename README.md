@@ -1,5 +1,7 @@
 # Sagaz
 
+<p align="center"><img src="docs/sagaz-banner.png" alt="Sagaz — Your agents can act. Can they undo? MCP proxy · effect ledger · reversibility gates · preview" width="100%"></p>
+
 > **Your agents can act. Can they undo?**
 
 Sagaz is an open source MCP proxy that records every effect your agents produce in the world — the *effect ledger*. It is being built to classify each effect by reversibility (**R**eversible / **C**ompensable / **I**rreversible) before it happens, and to give you preview, checkpoint, rollback by compensation, and a kill switch on top of that record.
