@@ -125,6 +125,13 @@ export function payloadOf(result: unknown): unknown {
  * mechanism end to end — an inverse derived from the result alone (create_contact) and one
  * that needs the pre-state captured before the row dies (delete_contact). Replaced by the
  * official toybox pack file in T11.
+ *
+ * Known gap, deliberate for T10: the delete_contact plan restores the contact's CONTENT but
+ * not its identity — create_contact does not accept an id yet, so the restored row gets a new
+ * one. T11's precondition extends create_contact with an optional id (restore semantics) and
+ * its pack must then derive `id: "$.pre_state.id"`. The general pack design principle behind
+ * it: every write tool must be able to express any state its capture read can return, or the
+ * inverse is inexpressible (the same identity problem that makes delete_tweet C, not R).
  */
 export const TOYBOX_TEST_PACK: readonly PackEntry[] = [
   {
