@@ -30,20 +30,23 @@ export async function ledgerCommand(parsed: Parsed, configPath: string, io: Comm
       io.out(style.dim("no effects match"));
       return 0;
     }
-    // The gate and preview columns only appear when something was stopped or ran dry: the common case stays narrow.
+    // The gate, undo and preview columns only appear when some row has something to say: the common case stays narrow.
     const gated = rows.some((r) => r.status === "blocked");
     const dry = rows.some((r) => r.status === "dry");
+    const undo = rows.some((r) => r.undo_status !== "none" || r.undo_json !== null);
     io.out(
       table(
         [
           { header: "seq", align: "right" }, { header: "tool" }, { header: "server" }, { header: "class" },
           { header: "status" }, { header: "duration", align: "right" }, { header: "result", align: "right" }, { header: "id" },
+          ...(undo ? [{ header: "undo" }] : []),
           ...(gated ? [{ header: "gate" }] : []),
           ...(dry ? [{ header: "preview" }] : []),
         ],
         rows.map((r) => [
           String(r.seq), r.tool, r.server, classCell(r, style), statusCell(r.status, style),
           formatDuration(r.ts_start, r.ts_end), formatBytes(r.result_json === null ? null : Buffer.byteLength(r.result_json)), style.dim(shortId(r.id)),
+          ...(undo ? [undoCell(r, style)] : []),
           ...(gated ? [r.status === "blocked" ? style.red(gateReason(r)) : ""] : []),
           ...(dry ? [r.status === "dry" ? previewNote(r, style) : ""] : []),
         ]),
@@ -62,6 +65,17 @@ function classCell(r: EffectRow, style: Style): string {
   if (r.class === "read") return style.cyan("read");
   if (r.class === "unknown") return style.yellow("unknown");
   return style.bold(r.class);
+}
+
+/**
+ * Minimal "has a plan" signal: the undo lifecycle status when there is one, or a dim
+ * "no plan" when a pack matched but no inverse could be derived (undo_json holds the reason;
+ * `sagaz ledger --json` shows it in full).
+ */
+function undoCell(r: EffectRow, style: Style): string {
+  if (r.undo_status !== "none") return style.green(r.undo_status);
+  if (r.undo_json !== null) return style.dim("no plan");
+  return "";
 }
 
 function statusCell(status: string, style: Style): string {

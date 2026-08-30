@@ -28,9 +28,11 @@ export async function statusCommand(parsed: Parsed, configPath: string, io: Comm
     const summaries = ledger.listSessionSummaries();
     const effects = summaries.reduce((n, s) => n + s.effects, 0);
     const pending = summaries.reduce((n, s) => n + s.pending, 0);
+    const dry = summaries.reduce((n, s) => n + s.dry, 0);
     const held = ledger.listPendingApprovals().length;
     io.out(
       `  state    ${summaries.length} session(s), ${effects} effect(s)${pending ? `, ${style.yellow(`${pending} pending`)}` : ""}` +
+        (dry ? `, ${style.magenta(`${dry} dry`)}` : "") +
         (held ? `, ${style.yellow(`${held} waiting for approval`)} ${style.dim("(sagaz pending)")}` : ""),
     );
     if (summaries.length === 0) return 0;
@@ -46,7 +48,7 @@ export async function statusCommand(parsed: Parsed, configPath: string, io: Comm
           s.id,
           formatTime(s.started_at),
           clientLabel(s.client_info),
-          s.pending ? `${s.effects} ${style.yellow(`(${s.pending} pending)`)}` : String(s.effects),
+          `${s.effects}${s.pending ? ` ${style.yellow(`(${s.pending} pending)`)}` : ""}${s.dry ? ` ${style.magenta(`(${s.dry} dry)`)}` : ""}`,
           s.last_ts ? formatTime(s.last_ts) : style.dim("-"),
         ]),
         style,
