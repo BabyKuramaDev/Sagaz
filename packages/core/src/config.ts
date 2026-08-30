@@ -97,6 +97,13 @@ const ConfigSchema = z.object({
    * downstream. Equivalent to `sagaz serve --preview`. See proxy.ts for the exact rule.
    */
   preview: z.boolean().default(false),
+  /**
+   * Capture hook + undo plans (T10). When a mutating tool has a compensation pack entry, the
+   * proxy runs the pack's capture read before forwarding and derives the undo plan after a
+   * successful close. There is no per-tool switch by design: the capture runs whenever the pack
+   * exists, and this single global flag turns the whole mechanism off.
+   */
+  capture: z.boolean().default(true),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;

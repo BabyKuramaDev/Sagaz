@@ -2,7 +2,8 @@
  * The Sagaz interceptor: an MCP server towards the client, an MCP client towards each
  * downstream server. Transparent pass-through of tools/list and tools/call; every call is
  * classified (R/C/I, see classifier/), gated by policy (see policy/) and recorded in the
- * effect ledger — blocked attempts included.
+ * effect ledger — blocked attempts included. Per call the order is: classify → policy/gates →
+ * capture hook (pack pre-state read, see undo/) → forward → close → derive undo plan.
  *
  * Preview mode (`sagaz serve --preview` / `"preview": true`) runs the whole session dry: a call
  * whose class is `read` (by the full cascade) is forwarded as usual so the agent can still see
@@ -33,8 +34,19 @@ import { PREFIX_SEPARATOR, type SagazConfig, type ServerConfig } from "./config.
 import { classify, type Classification } from "./classifier/index.js";
 import { configHash, type EffectStatus, type Ledger } from "./ledger/index.js";
 import { PREVIEW_INSTRUCTIONS, evaluatePolicy, gateResult, previewResult, type GateOutcome, type PolicyVerdict } from "./policy/index.js";
+import { TOYBOX_TEST_PACK, mapArgs, matchPackEntry, payloadOf, type PackEntry, type UndoNoPlan, type UndoToolCall } from "./undo/index.js";
 
 export const PROXY_NAME = "sagaz";
+
+/**
+ * A capture read that takes longer than this proceeds without a pre-state (the effect runs, the
+ * ledger records the no-plan). Deliberately short: the capture is Sagaz's read, not the
+ * agent's — a hung capture must never hang the agent's call indefinitely.
+ */
+export const DEFAULT_CAPTURE_TIMEOUT_MS = 5_000;
+
+/** Outcome of the capture step, carried from before the forward to the plan derivation. */
+type CaptureOutcome = { preState: CallToolResult } | { failure: string };
 
 export class ToolCollisionError extends Error {
   override readonly name = "ToolCollisionError";
@@ -65,6 +77,14 @@ export interface ProxyOptions {
   approvalPollMs?: number;
   /** Effect preview for the whole session (`sagaz serve --preview`). Also enabled by `preview: true` in the config. */
   preview?: boolean;
+  /**
+   * Compensation pack entries. INTERNAL / PROVISIONAL: defaults to the hardcoded toybox test
+   * pack until T11 loads real packs from the config; injectable so tests can force capture
+   * failures. See undo/packs.ts.
+   */
+  packs?: readonly PackEntry[];
+  /** How long a capture read may run before the effect proceeds without a pre-state (ms). */
+  captureTimeoutMs?: number;
 }
 
 export function exposedName(server: ServerConfig, downstreamName: string): string {
@@ -113,6 +133,8 @@ export class SagazProxy {
   private readonly ledger: Ledger | undefined;
   private readonly approvalPollMs: number | undefined;
   private readonly preview: boolean;
+  private readonly packs: readonly PackEntry[];
+  private readonly captureTimeoutMs: number;
   private sessionId: string | undefined;
 
   constructor(
@@ -125,6 +147,8 @@ export class SagazProxy {
     this.ledger = opts.ledger;
     this.approvalPollMs = opts.approvalPollMs;
     this.preview = Boolean(opts.preview || config.preview);
+    this.packs = opts.packs ?? TOYBOX_TEST_PACK;
+    this.captureTimeoutMs = opts.captureTimeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
   }
 
   /** True when the session runs dry (see the module comment). */
@@ -263,6 +287,14 @@ export class SagazProxy {
       if (stopped) return stopped;
     }
 
+    // Capture hook (T10): only for calls that will actually be forwarded — after the gates
+    // (a blocked call captures nothing) and before the forward (afterwards the pre-state no
+    // longer exists). A capture failure is logged and later recorded as a no-plan, never
+    // surfaced: Sagaz observes and protects, it does not break the agent's call.
+    // (In preview only reads reach this point and nothing needs undoing, so the hook stays off.)
+    const pack = this.config.capture && !this.preview ? matchPackEntry(this.packs, route.downstreamName, route.server) : undefined;
+    const captured = pack?.capture ? await this.capture(pack.capture, downstream, effectId, args) : undefined;
+
     let result: CallToolResult;
     try {
       result = (await downstream.client.callTool({ name: route.downstreamName, arguments: args })) as CallToolResult;
@@ -272,7 +304,86 @@ export class SagazProxy {
       throw err;
     }
     this.record(effectId, { status: result.isError ? "error" : "ok", result });
+    // Only a successful effect gets an undo plan: a failed or errored call changed nothing.
+    if (pack && effectId !== undefined && !result.isError) this.planUndo(effectId, pack, route, args, result, captured);
     return result;
+  }
+
+  /**
+   * Runs the pack's capture read and stores the pre-state on the pending effect (it is sealed
+   * into the hash when the effect closes). Its own short timeout: a hung capture must not hang
+   * the agent's call. Any failure — unresolvable args, transport error, tool error, timeout —
+   * comes back as a `failure` for planUndo to record; the effect itself always proceeds.
+   */
+  private async capture(
+    spec: NonNullable<PackEntry["capture"]>,
+    downstream: Downstream,
+    effectId: string | undefined,
+    args: Record<string, unknown>,
+  ): Promise<CaptureOutcome> {
+    try {
+      const captureArgs = mapArgs(spec.args, { args });
+      const preState = (await downstream.client.callTool(
+        { name: spec.tool, arguments: captureArgs },
+        undefined,
+        { timeout: this.captureTimeoutMs },
+      )) as CallToolResult;
+      if (preState.isError) {
+        const text = preState.content?.find((c) => c.type === "text")?.text;
+        return { failure: `capture read ${spec.tool} returned an error${typeof text === "string" ? `: ${text}` : ""}` };
+      }
+      if (effectId !== undefined && this.ledger) {
+        try {
+          this.ledger.setPreState(effectId, preState);
+        } catch (err) {
+          // Same policy as record(): a ledger failure never changes what the agent sees.
+          this.log(`sagaz: LEDGER WRITE FAILED storing pre-state for effect ${effectId}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      return { preState };
+    } catch (err) {
+      const failure = `capture read ${spec.tool} failed: ${err instanceof Error ? err.message : String(err)}`;
+      this.log(`sagaz: ${failure} — the call proceeds without a pre-state`);
+      return { failure };
+    }
+  }
+
+  /**
+   * Closes the T10 loop after a successful effect with a pack entry: derives the inverse call
+   * from args + result + pre-state and marks the plan (undo_status 'planned'). When no plan can
+   * be made — the capture failed, or a mapping cannot be resolved — the effect keeps
+   * undo_status 'none' and undo_json records the no-plan descriptor with the reason: the ledger
+   * says "cannot be undone, and here is why" instead of silently having no opinion.
+   */
+  private planUndo(
+    effectId: string,
+    pack: PackEntry,
+    route: Route,
+    args: Record<string, unknown>,
+    result: CallToolResult,
+    captured: CaptureOutcome | undefined,
+  ): void {
+    const record = (undo: { undoStatus: "planned"; undoJson: UndoToolCall } | { undoStatus: "none"; undoJson: UndoNoPlan }) => {
+      try {
+        this.ledger?.setUndo(effectId, undo);
+      } catch (err) {
+        this.log(`sagaz: LEDGER WRITE FAILED storing undo plan for effect ${effectId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    if (captured && "failure" in captured) {
+      this.log(`sagaz: no undo plan for ${route.downstreamName} — ${captured.failure}`);
+      return record({ undoStatus: "none", undoJson: { kind: "no_plan", reason: captured.failure } });
+    }
+    try {
+      const scope = { args, result: payloadOf(result), pre_state: captured ? payloadOf(captured.preState) : undefined };
+      const undoArgs = mapArgs(pack.inverse.args, scope);
+      this.log(`sagaz: undo planned for ${route.downstreamName} → ${pack.inverse.tool}`);
+      record({ undoStatus: "planned", undoJson: { kind: "tool_call", server: route.server, tool: pack.inverse.tool, args: undoArgs } });
+    } catch (err) {
+      const reason = `cannot derive inverse ${pack.inverse.tool}: ${err instanceof Error ? err.message : String(err)}`;
+      this.log(`sagaz: no undo plan for ${route.downstreamName} — ${reason}`);
+      record({ undoStatus: "none", undoJson: { kind: "no_plan", reason } });
+    }
   }
 
   /**

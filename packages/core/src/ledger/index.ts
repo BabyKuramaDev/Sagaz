@@ -22,6 +22,7 @@ export {
   type SessionRow,
   type SessionSummary,
   type TruncatedResult,
+  type UndoStatus,
 } from "./ledger.js";
 export { SCHEMA_APPROVALS_V1, SCHEMA_V1 } from "./schema.js";
 export { ulid } from "./ulid.js";

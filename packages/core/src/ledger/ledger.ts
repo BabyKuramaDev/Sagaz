@@ -23,13 +23,15 @@ export const PENDING_HASH = "";
 export type EffectStatus = "pending" | "ok" | "error" | "blocked" | "dry";
 export type EffectClass = "read" | "R" | "C" | "I" | "unknown";
 export type ClassSource = "annotation" | "rule" | "llm" | "user";
+/** Undo plan lifecycle (T0 §3.5): R jumps straight to 'planned'; C goes proposed → approved. */
+export type UndoStatus = "none" | "planned" | "proposed" | "approved" | "executed" | "failed" | "impossible";
 
 export interface EffectRow extends HashableEffect {
   checkpoint_id: string | null;
   class_source: ClassSource | null;
   class_reason: string | null;
   undo_json: string | null;
-  undo_status: string;
+  undo_status: UndoStatus;
   compensates_id: string | null;
   prev_hash: string;
   hash: string;
@@ -85,6 +87,7 @@ export interface EffectFilter {
 export interface SessionSummary extends SessionRow {
   effects: number;
   pending: number;
+  dry: number;
   last_ts: string | null;
 }
 
@@ -213,6 +216,7 @@ export class Ledger {
       .prepare(
         `SELECT s.*, COUNT(e.id) AS effects,
                 SUM(CASE WHEN e.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN e.status = 'dry' THEN 1 ELSE 0 END) AS dry,
                 MAX(COALESCE(e.ts_end, e.ts_start)) AS last_ts
          FROM sessions s LEFT JOIN effects e ON e.session_id = s.id
          GROUP BY s.id ORDER BY s.id`,
@@ -263,6 +267,43 @@ export class Ledger {
       return this.get(id) as EffectRow;
     });
     return close();
+  }
+
+  /**
+   * Stores the capture hook's read result on a still-pending effect. Written at most once,
+   * strictly before end(): the close seals pre_state_json into the row's hash (T0 §3 — it is
+   * one of the 12 canonical fields), so a pre-state landing later would break the chain.
+   * Truncated like result_json; the derived plan carries the resolved args, not a reference.
+   */
+  setPreState(id: string, preState: unknown): void {
+    const json = truncateJson(JSON.stringify(preState), this.maxResultBytes);
+    const info = this.db
+      .prepare("UPDATE effects SET pre_state_json = ? WHERE id = ? AND status = 'pending' AND pre_state_json IS NULL")
+      .run(json, id);
+    if (info.changes === 0) {
+      const current = this.get(id);
+      if (!current) throw new Error(`Effect ${id} not found`);
+      throw new Error(
+        current.status !== "pending"
+          ? `Effect ${id} already closed (${current.status}) — the pre-state must be captured before the close seals the hash`
+          : `Effect ${id} already has a pre-state`,
+      );
+    }
+  }
+
+  /**
+   * Undo lifecycle write: the plan (or no-plan descriptor) and its status. These columns are
+   * outside the hash chain by design (T0 §3.5) — they mutate as the plan advances — so this is
+   * the one legal UPDATE on a closed row. Refused while the effect is still pending: a plan
+   * describes how to undo something that happened.
+   */
+  setUndo(id: string, input: { undoStatus: UndoStatus; undoJson?: unknown }): void {
+    const effect = this.get(id);
+    if (!effect) throw new Error(`Effect ${id} not found`);
+    if (effect.status === "pending") throw new Error(`Effect ${id} is still pending — an undo plan needs a closed effect`);
+    this.db
+      .prepare("UPDATE effects SET undo_status = ?, undo_json = ? WHERE id = ?")
+      .run(input.undoStatus, input.undoJson === undefined ? effect.undo_json : JSON.stringify(input.undoJson), id);
   }
 
   get(id: string): EffectRow | undefined {
