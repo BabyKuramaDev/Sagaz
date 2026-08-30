@@ -2,7 +2,7 @@
 
 > **Undo para agentes de IA.** Un proxy MCP open source que registra cada efecto que tus agentes producen en el mundo, clasifica su reversibilidad antes de ejecutarlo, y te da preview, checkpoint, rollback y compensaciones. Git para las acciones de tus agentes.
 
-**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), Fase 1 en curso (T7 clasificador hecho; siguiente T8 gates). Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
+**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), Fase 1 en curso (T7 clasificador y T8 gates hechos; siguiente T9 preview). Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
 **Licencia:** MIT
 **Objetivo primario:** peso en la industria (revuelo, adopción, vocabulario propio), no revenue.
 **Acto 2 (futuro, fuera de scope):** el ledger como base de "Compliance Officer para sistemas de IA".
@@ -152,8 +152,11 @@ El repo se hace público al final de Fase 1. Auditoría como dev escéptico (REA
 Cascada reglas de usuario → anotaciones → heurísticas → `unknown` (§4). Solo anota, no frena.
 ✓ Checkpoint: reel del toybox con la columna `class` viva; tests de la cascada y de usuario-sobre-anotación.
 
-**T8 — Gates por política** *(siguiente)*: `tipo I → confirmar | bloquear`, `tool X → siempre preguntar`; `status = 'blocked'` en el ledger.
-**T9 — Preview**: reportar el efecto sin reenviar (`status = 'dry'`).
+**T8 — Gates por política** — **hecho**
+Política de fábrica = guardián (`I → confirm`, el resto `allow`); `policy.class` y `policy.tools` (matching de rules) con `allow | confirm | block`. Confirm sincrónico vía tabla `approvals` (enmienda T0 §4c) y `sagaz pending / approve / deny`; timeout, deny y cancelación del cliente cierran el efecto como `blocked` (en la cadena) con una plantilla `isError` legible por el agente. Una aprobación autoriza una espera viva, no una orden eterna.
+✓ Checkpoint: reel corrido de verdad (retenido → approve → sale; retenido → deny → plantilla + blocked en rojo); tests del guardián, tool-sobre-clase, timeout, cancelación y las tres plantillas.
+
+**T9 — Preview** *(siguiente)*: reportar el efecto sin reenviar (`status = 'dry'`).
 
 ## 7. Distribución (es parte del producto, no un anexo)
 
