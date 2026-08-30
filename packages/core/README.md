@@ -11,13 +11,14 @@ Precedence, first hit wins:
 | Level | Source | `class_source` | What it looks at |
 |---|---|---|---|
 | 1 | **your rules** in `sagaz.config.json` | `user` | tool name (exact or glob), optional server |
-| 2 | MCP tool annotations | `annotation` | `readOnlyHint: true` → `read` |
-| 3 | built-in name heuristics | `rule` | the first word of the tool name (table below) |
-| 4 | nothing matched | `rule` | → `unknown` |
+| 2 | **compensation packs** (section below) | `pack` | a pack entry declaring the tool's inverse → `R` |
+| 3 | MCP tool annotations | `annotation` | `readOnlyHint: true` → `read` |
+| 4 | built-in name heuristics | `rule` | the first word of the tool name (table below) |
+| 5 | nothing matched | `rule` | → `unknown` |
 
-Your rules **always** win. Annotations are what the server *declares* about itself, not revealed truth; only you know your world.
+Your rules **always** win — over packs too. Annotations are what the server *declares* about itself, not revealed truth; only you know your world.
 
-`destructiveHint: true` is not a class by itself (destructive ≠ irreversible, and it says nothing about whether an inverse is known). It acts as a cap: whatever the heuristics say, the result can never be `R`.
+`destructiveHint: true` is not a class by itself (destructive ≠ irreversible, and it says nothing about whether an inverse is known). It acts as a cap: whatever the heuristics say, the result can never be `R`. The cap does **not** apply to an `R` by pack — it existed precisely because the inverse was unknown, and a pack is the inverse being known.
 
 ### The governing principle
 
@@ -38,7 +39,7 @@ The classifier reduces the tool name to its first word (`gmail.sendEmail` → `s
 
 A read verb up front does not make the whole name a read: `get_or_create_user`, `search_and_destroy`, `list_and_delete` → `unknown` (the name also contains a mutating verb).
 
-`update_*` / `delete_*` will become `R` only when a compensation pack with a capture hook exists for that tool (Phase 2), or when you say so with a rule.
+`update_*` / `delete_*` become `R` only when a compensation pack covers that tool (section below), or when you say so with a rule.
 
 Source: `src/classifier/heuristics.ts`. Keep this table and that file in sync.
 
@@ -62,6 +63,54 @@ Source: `src/classifier/heuristics.ts`. Keep this table and that file in sync.
 - First matching rule in file order wins.
 
 Rules are not retroactive: effects already in the ledger keep the class they were sealed with.
+
+## Compensation packs: declaring the inverse
+
+A pack is the declarative `tool → inverse` map behind class `R`. For each covered tool it says how to read the **pre-state** before the call runs (`capture`, optional — the inverse of a delete needs the row before it dies) and how to build the **inverse call** afterwards (`inverse`, args mapped from the original call, its result, and the captured pre-state). When a mutating call matches a pack entry, the proxy runs the capture read after the gates and before forwarding, and on a successful close stores the derived plan in `undo_json` (`undo_status = 'planned'`) — what `sagaz rollback` executes.
+
+```json
+{
+  "name": "toybox-crm",
+  "description": "Deterministic inverses for the toybox CRM",
+  "entries": [
+    {
+      "tool": "create_contact",
+      "note": "the result carries the id; deleting it is the exact inverse",
+      "inverse": { "tool": "delete_contact", "args": { "id": "$.result.id" } }
+    },
+    {
+      "tool": "delete_contact",
+      "capture": { "tool": "get_contact", "args": { "id": "$.args.id" } },
+      "inverse": {
+        "tool": "create_contact",
+        "args": { "id": "$.pre_state.id", "name": "$.pre_state.name", "email": "$.pre_state.email", "company": "$.pre_state.company" }
+      }
+    }
+  ]
+}
+```
+
+- `name`, `description` — required. The name identifies the pack in `sagaz packs`, in `class_reason` and in collision errors.
+- `tool` — exact downstream tool name or a glob (`*`), with an optional `server` restriction: the same matching as rules. Within one pack, first matching entry wins (file order — yours).
+- `capture.args` — mapped from `$.args.*` only: nothing else exists before the call runs.
+- `inverse.args` — mapped from `$.args.*`, `$.result.*` and `$.pre_state.*`. `$.result` / `$.pre_state` resolve against the tool result's payload (`structuredContent`, or its text content parsed as JSON).
+- `note` — optional, human: *why* this is the inverse. Shown by `sagaz packs`, never interpreted.
+
+Validation is strict — an unknown key is treated as a typo and every error names the exact field. An inverse that reads `$.pre_state` without declaring a `capture` is refused at load time.
+
+Load packs from `sagaz.config.json` — inline objects, or paths relative to the config file:
+
+```json
+{ "packs": ["packages/toybox/sagaz-pack.json", { "name": "inline", "description": "...", "entries": [...] }] }
+```
+
+Two packs covering the same downstream tool is a **startup error**, in the same spirit as tool-name collisions: there is no defined order between packs and Sagaz never picks an inverse by magic. `sagaz packs` shows what is loaded, every entry, and which downstream tools are covered / not covered — the "not covered" list is your to-do list.
+
+**Classification.** A tool covered by a pack classifies `R` with `class_source = 'pack'` and a reason citing the pack: `R` means "Sagaz knows how to execute the inverse", and now it does — the pack declares it and the pre-state is captured before the call runs. The class is sealed when the effect closes; if the capture read itself fails at runtime, the effect still runs, keeps its class, and `undo_json` records a no-plan descriptor with the reason — the plan lifecycle, not the class, carries what actually happened. With `"capture": false` the whole mechanism is off and packs are inert: nothing is captured **and nothing classifies `R` by pack** — an inverse whose pre-state will never be captured is not a known inverse.
+
+### The pack design principle
+
+**Every write tool must be able to express any state its capture read can return — or the inverse is inexpressible.** The toybox contact vs. tweet pair is the canonical example. `get_contact` returns a contact with its `id`; `create_contact` accepts that `id` back (restore semantics), so the inverse of `delete_contact` restores the row *as the row it was* — identity included — and `delete_contact` is honestly `R`. `delete_tweet` has no such partner: reposting the text would create a *new* tweet — another id, another timestamp, none of the original's history. A deterministic inverse must restore identity, not just content; **if the world does not allow it, the effect is `C`, not `R`** — no pack entry can fix that, only the world can. Write your pack (and, if you own the server, your tools) with this principle in front of you.
 
 ## Gates: what happens once a call has a class
 
