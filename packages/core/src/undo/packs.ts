@@ -76,6 +76,18 @@ export interface PackMatch {
 }
 
 /**
+ * The entries still in force when the global `"capture": false` switch is on. The flag turns
+ * off the CAPTURE, not the undo: an entry that derives its inverse without pre-state
+ * (create → delete from the result) stays active; only entries that declare a capture read go
+ * inert — their pre-state would never exist, so neither can their R. Packs left empty are dropped.
+ */
+export function withoutCaptureEntries(packs: readonly CompensationPack[]): CompensationPack[] {
+  return packs
+    .map((p) => ({ ...p, entries: p.entries.filter((e) => e.capture === undefined) }))
+    .filter((p) => p.entries.length > 0);
+}
+
+/**
  * First matching entry across packs. WITHIN a pack, entry order is the author's and first match
  * wins (like classification rules); BETWEEN packs there is no defined order, so the proxy
  * refuses to start when two packs cover the same downstream tool (see assertNoPackCollisions

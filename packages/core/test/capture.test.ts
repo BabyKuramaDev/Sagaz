@@ -180,19 +180,19 @@ describe("capture hook + undo plans over a real toybox (official pack file)", ()
     }
   });
 
-  it("`\"capture\": false` switches the whole mechanism off: no pre-state, no plans", async () => {
+  it("`\"capture\": false` turns off the capture, not the undo: capture entries go inert, result-derived inverses stay active", async () => {
     const t = await overToybox({ capture: false });
     try {
       await t.client.callTool({ name: "create_contact", arguments: { name: "Alan Turing", email: "alan@bletchley.uk" } });
       await t.client.callTool({ name: "delete_contact", arguments: { id: 1 } });
       const rows = t.ledger.listEffects(t.proxy.currentSessionId as string);
-      expect(rows.map((r) => [r.status, r.undo_status, r.pre_state_json, r.undo_json])).toEqual([
-        ["ok", "none", null, null],
-        ["ok", "none", null, null],
-      ]);
-      // With capture off the packs are inert for CLASSIFICATION too: an inverse whose
-      // pre-state will never be captured is not a known inverse, so no R by pack.
-      expect(rows[1]).toMatchObject({ tool: "delete_contact", class: "unknown" });
+      // create_contact declares no capture: its inverse derives from the result alone, so the
+      // flag does not touch it — still R by pack, still planned.
+      expect(rows[0]).toMatchObject({ tool: "create_contact", class: "R", class_source: "pack", undo_status: "planned", pre_state_json: null });
+      expect(undoOf(rows[0]!)).toEqual({ kind: "tool_call", server: "toybox", tool: "delete_contact", args: { id: 4 } });
+      // delete_contact needs the capture read the flag just switched off: inert — no read runs,
+      // no pre-state, no plan, and no R (an inverse whose pre-state will never exist is unknown).
+      expect(rows[1]).toMatchObject({ tool: "delete_contact", class: "unknown", undo_status: "none", pre_state_json: null, undo_json: null });
     } finally {
       await t.close();
     }

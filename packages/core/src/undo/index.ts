@@ -5,6 +5,7 @@ export {
   matchPackEntry,
   payloadOf,
   resolveReference,
+  withoutCaptureEntries,
   type CaptureSpec,
   type CompensationPack,
   type InverseSpec,

@@ -7,7 +7,7 @@
  * work (an inverse, a rule, or accepting C/I) would close it. Collisions between packs fail
  * here exactly as they fail `sagaz serve` — this command exists to see them, not to hide them.
  */
-import { assertNoPackCollisions, classify, loadConfig, matchPack, probeDownstreamTools, type CompensationPack } from "sagaz-core";
+import { assertNoPackCollisions, classify, loadConfig, matchPack, probeDownstreamTools, withoutCaptureEntries, type CompensationPack } from "sagaz-core";
 import type { Parsed } from "../args.js";
 import { table, type Style } from "../format.js";
 import type { CommandIO } from "./context.js";
@@ -20,12 +20,12 @@ export async function packsCommand(_parsed: Parsed, configPath: string, io: Comm
   if (packs.length === 0) {
     io.out(style.yellow("no compensation packs loaded") + style.dim(` — add "packs": [...] (inline packs or paths to pack .json files) to ${configPath}`));
   } else {
-    io.out(`${style.bold(String(packs.length))} pack(s) loaded${config.capture ? "" : ` — ${style.red('inert: "capture": false')} (nothing is captured, nothing classifies R by pack)`}`);
+    io.out(`${style.bold(String(packs.length))} pack(s) loaded${config.capture ? "" : ` — ${style.red('"capture": false')}: entries that declare a capture read are inert; result-derived inverses stay active`}`);
     for (const pack of packs) printPack(pack, io);
   }
 
   const toolsByServer = await probeDownstreamTools(config);
-  const activePacks = config.capture ? packs : [];
+  const activePacks = config.capture ? packs : withoutCaptureEntries(packs);
   assertNoPackCollisions(activePacks, toolsByServer);
 
   io.out("");

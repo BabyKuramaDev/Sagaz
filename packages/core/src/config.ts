@@ -103,9 +103,10 @@ const ConfigSchema = z.object({
    * Capture hook + undo plans (T10). When a mutating tool has a compensation pack entry, the
    * proxy runs the pack's capture read before forwarding and derives the undo plan after a
    * successful close. There is no per-tool switch by design: the capture runs whenever the pack
-   * exists, and this single global flag turns the whole mechanism off — packs included: with
-   * `"capture": false` no pack classifies anything R either, because an inverse whose pre-state
-   * will never be captured is an inverse Sagaz cannot execute.
+   * exists, and this single global flag turns the CAPTURE off — not the undo (T11): pack
+   * entries that declare a capture read go inert with it (their pre-state would never exist,
+   * so neither can their R), while inverses derived without pre-state (create → delete from
+   * the result) keep classifying R and planning.
    */
   capture: z.boolean().default(true),
   /**

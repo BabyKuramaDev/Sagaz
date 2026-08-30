@@ -345,12 +345,16 @@ describe("sagaz packs (T11)", () => {
     expect(out).toMatch(/delete_contact\s+unknown\s+/); // without the pack, back to unknown
   });
 
-  it("capture off: packs load but are declared inert, and nothing classifies R by pack", () => {
+  it("capture off: capture entries go inert, the result-derived inverse stays covered", () => {
     writeConfig({ packs: [officialPack], capture: false });
     const out = sagaz("packs").out;
-    expect(out).toMatch(/inert: "capture": false/);
-    expect(out).not.toMatch(/covered by a pack/);
+    expect(out).toMatch(/"capture": false.*entries that declare a capture read are inert; result-derived inverses stay active/);
+    // create_contact derives its inverse from the result — untouched by the flag.
+    expect(out).toMatch(/covered by a pack \(1\)[\s\S]*create_contact\s+R\s+toybox-crm → delete_contact/);
+    // The capture-needing entries fall back onto the to-do list as unknown.
+    expect(out).toMatch(/not covered \(6\)/);
     expect(out).toMatch(/delete_contact\s+unknown\s+/);
+    expect(out).toMatch(/update_contact\s+unknown\s+/);
   });
 
   it("a handwritten pack with a typo fails with the file path and the exact field", () => {

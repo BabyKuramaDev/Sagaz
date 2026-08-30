@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ConfigError, parseConfig } from "../src/config.js";
 import { PackError, loadPackFile, parsePack } from "../src/undo/pack-format.js";
-import { matchPack, type CompensationPack } from "../src/undo/packs.js";
+import { matchPack, withoutCaptureEntries, type CompensationPack } from "../src/undo/packs.js";
 import { PackCollisionError, assertNoPackCollisions } from "../src/proxy.js";
 
 const VALID = {
@@ -123,6 +123,22 @@ describe("matchPack (globs, server scope) and cross-pack collisions", () => {
     expect(matchPack([pack("a", "delete_*")], "delete_row", "s")?.pack.name).toBe("a");
     expect(matchPack([pack("a", "delete_*")], "undelete_row", "s")).toBeUndefined();
     expect(matchPack([pack("a", "t", "other")], "t", "s")).toBeUndefined();
+  });
+
+  it("withoutCaptureEntries keeps only capture-less entries and drops packs left empty", () => {
+    const mixed: CompensationPack = {
+      name: "mixed", description: "d",
+      entries: [
+        { tool: "delete_row", capture: { tool: "get_row", args: { id: "$.args.id" } }, inverse: { tool: "create_row", args: { id: "$.pre_state.id" } } },
+        { tool: "create_row", inverse: { tool: "delete_row", args: { id: "$.result.id" } } },
+      ],
+    };
+    const captureOnly: CompensationPack = {
+      name: "captures", description: "d",
+      entries: [{ tool: "update_row", capture: { tool: "get_row", args: { id: "$.args.id" } }, inverse: { tool: "update_row", args: { id: "$.args.id" } } }],
+    };
+    const active = withoutCaptureEntries([mixed, captureOnly]);
+    expect(active.map((p) => [p.name, p.entries.map((e) => e.tool)])).toEqual([["mixed", ["create_row"]]]);
   });
 
   it("two packs covering the same downstream tool refuse to start, naming both", () => {

@@ -34,7 +34,7 @@ import { PREFIX_SEPARATOR, type SagazConfig, type ServerConfig } from "./config.
 import { classify, type Classification } from "./classifier/index.js";
 import { configHash, type EffectStatus, type Ledger } from "./ledger/index.js";
 import { PREVIEW_INSTRUCTIONS, evaluatePolicy, gateResult, previewResult, type GateOutcome, type PolicyVerdict } from "./policy/index.js";
-import { mapArgs, matchPack, matchPackEntry, payloadOf, type CompensationPack, type PackEntry, type PackMatch, type UndoNoPlan, type UndoToolCall } from "./undo/index.js";
+import { mapArgs, matchPack, matchPackEntry, payloadOf, withoutCaptureEntries, type CompensationPack, type PackEntry, type PackMatch, type UndoNoPlan, type UndoToolCall } from "./undo/index.js";
 
 export const PROXY_NAME = "sagaz";
 
@@ -156,7 +156,11 @@ export class SagazProxy {
   private readonly ledger: Ledger | undefined;
   private readonly approvalPollMs: number | undefined;
   private readonly preview: boolean;
-  /** Packs in force. Empty when `"capture": false`: an inverse whose pre-state will never be captured is not a known inverse, so packs then neither capture nor classify. */
+  /**
+   * Packs in force. `"capture": false` turns off the capture, not the undo: entries that
+   * declare a capture read go inert (their pre-state would never exist), result-derived
+   * inverses stay active. A ledger-less proxy keeps none — nowhere to store a plan.
+   */
   private readonly packs: readonly CompensationPack[];
   private readonly captureTimeoutMs: number;
   private sessionId: string | undefined;
@@ -171,10 +175,10 @@ export class SagazProxy {
     this.ledger = opts.ledger;
     this.approvalPollMs = opts.approvalPollMs;
     this.preview = Boolean(opts.preview || config.preview);
-    // Packs need the ledger as much as they need the capture flag: without one there is
-    // nowhere to store a pre-state or a plan, so claiming R by pack would be a false
-    // reversible — the same reasoning as `"capture": false`, applied to the ledger-less proxy.
-    this.packs = config.capture && opts.ledger ? (opts.packs ?? config.packs) : [];
+    // Packs need the ledger: without one there is nowhere to store a pre-state or a plan, so
+    // claiming R by pack would be a false reversible.
+    const packs = opts.ledger ? (opts.packs ?? config.packs) : [];
+    this.packs = config.capture ? packs : withoutCaptureEntries(packs);
     this.captureTimeoutMs = opts.captureTimeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
   }
 

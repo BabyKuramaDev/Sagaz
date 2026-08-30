@@ -39,9 +39,11 @@ export interface ClassifyInput {
   annotations?: ToolAnnotations | undefined;
   rules?: readonly ClassificationRule[] | undefined;
   /**
-   * Loaded compensation packs. The caller decides whether they are in force: the proxy passes
-   * none when `"capture": false` — an inverse whose pre-state will never be captured is an
-   * inverse Sagaz cannot execute, and claiming R then would be a false reversible.
+   * Compensation packs IN FORCE — the caller filters before classifying: with
+   * `"capture": false` only capture-less entries remain (withoutCaptureEntries), and a
+   * ledger-less proxy passes none. An inverse whose pre-state will never be captured, or whose
+   * plan has nowhere to live, is an inverse Sagaz cannot execute — claiming R then would be a
+   * false reversible.
    */
   packs?: readonly CompensationPack[] | undefined;
 }
