@@ -2,7 +2,7 @@
 
 > **Undo para agentes de IA.** Un proxy MCP open source que registra cada efecto que tus agentes producen en el mundo, clasifica su reversibilidad antes de ejecutarlo, y te da preview, checkpoint, rollback y compensaciones. Git para las acciones de tus agentes.
 
-**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), Fase 1 en curso (T7 clasificador y T8 gates hechos; siguiente T9 preview). Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
+**Estado:** Spec v0.2 — Fase 0 completa (T0–T6), **Fase 1 completa (T7 clasificador, T8 gates, T9 preview)**; siguiente: lanzamiento (§7) y Fase 2. Enmiendas de implementación en `docs/T0-recon-y-schema.md` §4b.
 **Licencia:** MIT
 **Objetivo primario:** peso en la industria (revuelo, adopción, vocabulario propio), no revenue.
 **Acto 2 (futuro, fuera de scope):** el ledger como base de "Compliance Officer para sistemas de IA".
@@ -82,7 +82,7 @@ Los agentes ejecutan acciones sobre el mundo real (DBs, APIs, emails, archivos) 
   - Tipo R: mapa declarativo `tool → inversa` (provisto por packs por dominio + config del usuario).
   - Tipo C: generación por LLM con contexto del efecto + resultado, SIEMPRE con aprobación humana antes de ejecutar. Una compensación mal generada es un segundo incidente.
 - **Policy/Gates**: reglas simples en config — `tipo I → bloquear | pedir confirmación`, `tool X → siempre preguntar`, umbrales. (Mínimo viable de "engarce" sin competir con los gateways.)
-- **CLI**: hoy `sagaz serve`, `sagaz ledger`, `sagaz status`, `sagaz verify`; después `sagaz checkpoint`, `sagaz rollback [--dry]`. Dashboard web queda para Fase 4.
+- **CLI**: hoy `sagaz serve [--preview]`, `sagaz ledger`, `sagaz status`, `sagaz verify`, `sagaz pending / approve / deny`, `sagaz preview-report`; después `sagaz checkpoint`, `sagaz rollback [--dry]`. Dashboard web queda para Fase 4.
 
 **Decisiones técnicas:**
 
@@ -156,7 +156,9 @@ Cascada reglas de usuario → anotaciones → heurísticas → `unknown` (§4). 
 Política de fábrica = guardián (`I → confirm`, el resto `allow`); `policy.class` y `policy.tools` (matching de rules) con `allow | confirm | block`. Confirm sincrónico vía tabla `approvals` (enmienda T0 §4c) y `sagaz pending / approve / deny`; timeout, deny y cancelación del cliente cierran el efecto como `blocked` (en la cadena) con una plantilla `isError` legible por el agente. Una aprobación autoriza una espera viva, no una orden eterna.
 ✓ Checkpoint: reel corrido de verdad (retenido → approve → sale; retenido → deny → plantilla + blocked en rojo); tests del guardián, tool-sobre-clase, timeout, cancelación y las tres plantillas.
 
-**T9 — Preview** *(siguiente)*: reportar el efecto sin reenviar (`status = 'dry'`).
+**T9 — Preview** — **hecho**
+Modo de sesión (`sagaz serve --preview` / `"preview": true`), no por call: "corré el agente entero en seco". Regla: class `read` por la cascada completa → passthrough (un agente ciego no planea); toda mutación y todo `unknown` → `status = 'dry'`, respuesta hablada (`isError: false`: el agente sigue planeando) y nunca reenviada. La política no corre en preview (nada se ejecuta, nada que aprobar): el veredicto se calcula, no se aplica, y viaja en `_meta.sagaz.wouldHave`. Los dry entran al hash chain como todo. Borde documentado: un `read` mal clasificado que muta SÍ se ejecuta — por eso `unknown` no se reenvía. `sagaz preview-report` agrupa los dry por clase y cuenta qué habría pasado.
+✓ Checkpoint: reel en preview — reads reales, mutaciones habladas, `sagaz-toybox inspect` byte a byte igual al seed, `pending` vacío con un I en la sesión, cadena OK con dry; tests de reads/mutaciones/unknown/I-sin-pending/chain/mundo intacto/política-no-corre.
 
 ## 7. Distribución (es parte del producto, no un anexo)
 
