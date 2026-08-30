@@ -5,5 +5,14 @@
       "args": ["packages/toybox/dist/index.js"],
       "env": { "TOYBOX_DB": "./toybox.db" }
     }
-  }
+  },
+  "packs": ["packages/toybox/sagaz-pack.json"],
+  "rules": [
+    {
+      "tool": "delete_tweet",
+      "server": "toybox",
+      "class": "C",
+      "reason": "reposting restores content, not identity (no post_tweet(id)) — the R/C boundary; see the toybox pack README"
+    }
+  ]
 }

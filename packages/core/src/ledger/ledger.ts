@@ -11,7 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { effectHash, genesisHash, sha256Hex, type HashableEffect } from "./hash.js";
-import { SCHEMA_APPROVALS_V1, SCHEMA_V1 } from "./schema.js";
+import { SCHEMA_APPROVALS_V1, SCHEMA_V1, migrateClassSourcePack } from "./schema.js";
 import { ulid } from "./ulid.js";
 
 export const DEFAULT_LEDGER_PATH = "./.sagaz/ledger.db";
@@ -22,7 +22,8 @@ export const PENDING_HASH = "";
 
 export type EffectStatus = "pending" | "ok" | "error" | "blocked" | "dry";
 export type EffectClass = "read" | "R" | "C" | "I" | "unknown";
-export type ClassSource = "annotation" | "rule" | "llm" | "user";
+/** Who decided the class. 'pack' = a compensation pack declares the inverse (T0 §4d, T11). */
+export type ClassSource = "annotation" | "rule" | "llm" | "user" | "pack";
 /** Undo plan lifecycle (T0 §3.5): R jumps straight to 'planned'; C goes proposed → approved. */
 export type UndoStatus = "none" | "planned" | "proposed" | "approved" | "executed" | "failed" | "impossible";
 
@@ -161,6 +162,10 @@ export class Ledger {
       if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
       this.db = new Database(path);
       this.db.pragma("journal_mode = WAL");
+      // T0 §4d: a ledger written before T11 has a class_source CHECK without 'pack' — rebuild
+      // the table before touching anything else. Old rows keep their hashes (class_source is
+      // not canonical), so verify is unaffected.
+      migrateClassSourcePack(this.db);
       this.db.exec(SCHEMA_V1);
       this.db.exec(SCHEMA_APPROVALS_V1);
     }

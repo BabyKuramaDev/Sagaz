@@ -20,10 +20,15 @@ import { z } from "zod";
 import { SagazProxy } from "../src/proxy.js";
 import { parseConfig } from "../src/config.js";
 import { Ledger, type EffectRow } from "../src/ledger/index.js";
-import { PathError, mapArgs, matchPackEntry, payloadOf, resolveReference, type PackEntry } from "../src/undo/index.js";
+import { loadPackFile } from "../src/undo/pack-format.js";
+import { PathError, mapArgs, matchPackEntry, payloadOf, resolveReference, type CompensationPack, type PackEntry } from "../src/undo/index.js";
 
 const TOYBOX_BIN = fileURLToPath(new URL("../../toybox/dist/index.js", import.meta.url));
 if (!existsSync(TOYBOX_BIN)) throw new Error(`toybox not built (${TOYBOX_BIN}). Run \`pnpm build\` before \`pnpm test\`.`);
+/** The OFFICIAL toybox pack file — these e2e tests run against the real contract. */
+const TOYBOX_PACK = loadPackFile(fileURLToPath(new URL("../../toybox/sagaz-pack.json", import.meta.url)));
+/** Wraps loose entries as a pack, for tests that only care about the entries. */
+const packOf = (entries: PackEntry[], name = "test-pack"): CompensationPack[] => [{ name, description: "test entries", entries }];
 
 function toyboxCli(db: string, cmd: "seed" | "inspect"): string {
   return execFileSync(process.execPath, [TOYBOX_BIN, cmd], { encoding: "utf8", env: { ...process.env, TOYBOX_DB: db } });
@@ -59,6 +64,7 @@ async function overToybox(extra: Record<string, unknown> = {}, opts: Record<stri
   const config = parseConfig({
     servers: { toybox: { command: process.execPath, args: [TOYBOX_BIN], env: { TOYBOX_DB: db } } },
     policy: { class: { I: "allow" } },
+    packs: [TOYBOX_PACK],
     ...extra,
   });
   const proxy = new SagazProxy(config, { log: () => {}, ledger, ...opts });
@@ -72,7 +78,7 @@ async function overToybox(extra: Record<string, unknown> = {}, opts: Record<stri
   return { db, ledgerPath, ledger, proxy, client, close };
 }
 
-describe("capture hook + undo plans over a real toybox (built-in test pack)", () => {
+describe("capture hook + undo plans over a real toybox (official pack file)", () => {
   it("create_contact: inverse derived from the result alone — planned, no pre-state needed", async () => {
     const t = await overToybox();
     try {
@@ -99,10 +105,14 @@ describe("capture hook + undo plans over a real toybox (built-in test pack)", ()
 
       const [row] = t.ledger.listEffects(t.proxy.currentSessionId as string);
       expect(row).toMatchObject({ tool: "delete_contact", status: "ok", undo_status: "planned" });
+      // T11: no more `unknown` — the pack declares the inverse, so the class is R with pack
+      // provenance, and destructiveHint (delete_contact carries it) does NOT cap an R by pack.
+      expect(row).toMatchObject({ class: "R", class_source: "pack", class_reason: expect.stringContaining('"toybox-crm"') });
       expect(preStateOf(row!)).toMatchObject({ id: 2, name: "Grace Hopper", email: "grace@cobol.navy", company: "US Navy" });
+      // T11: the inverse restores IDENTITY too — id travels from the captured pre-state.
       expect(undoOf(row!)).toEqual({
         kind: "tool_call", server: "toybox", tool: "create_contact",
-        args: { name: "Grace Hopper", email: "grace@cobol.navy", company: "US Navy" },
+        args: { id: 2, name: "Grace Hopper", email: "grace@cobol.navy", company: "US Navy" },
       });
       // The pre-state is sealed inside the hash: the chain verifies with it in place…
       expect(t.ledger.verifySession(t.proxy.currentSessionId as string)).toMatchObject({ ok: true });
@@ -118,11 +128,11 @@ describe("capture hook + undo plans over a real toybox (built-in test pack)", ()
       await t.client.callTool({ name: "delete_contact", arguments: { id: 4 } });
       const rows = t.ledger.listEffects(t.proxy.currentSessionId as string);
       const plan = undoOf(rows[1]!) as { args: Record<string, unknown> };
-      expect(plan.args).toEqual({ name: "Nameless Co", email: "no@company.io", company: null });
-      // The planned inverse actually runs (what T12 will execute).
+      expect(plan.args).toEqual({ id: 4, name: "Nameless Co", email: "no@company.io", company: null });
+      // The planned inverse actually runs (what T12 will execute) — and restores the original id.
       const undone = (await t.client.callTool({ name: "create_contact", arguments: plan.args })) as CallToolResult;
       expect(undone.isError).toBeFalsy();
-      expect(JSON.parse(text(undone)).company).toBeNull();
+      expect(JSON.parse(text(undone))).toMatchObject({ id: 4, company: null });
     } finally {
       await t.close();
     }
@@ -153,7 +163,7 @@ describe("capture hook + undo plans over a real toybox (built-in test pack)", ()
       capture: { tool: "get_contact_gone", args: { id: "$.args.id" } },
       inverse: { tool: "create_contact", args: { name: "$.pre_state.name", email: "$.pre_state.email" } },
     }];
-    const t = await overToybox({}, { packs: brokenPack });
+    const t = await overToybox({}, { packs: packOf(brokenPack) });
     try {
       const r = (await t.client.callTool({ name: "delete_contact", arguments: { id: 3 } })) as CallToolResult;
       // The effect ran exactly as if the capture did not exist.
@@ -170,16 +180,19 @@ describe("capture hook + undo plans over a real toybox (built-in test pack)", ()
     }
   });
 
-  it("`\"capture\": false` switches the whole mechanism off: no pre-state, no plans", async () => {
+  it("`\"capture\": false` turns off the capture, not the undo: capture entries go inert, result-derived inverses stay active", async () => {
     const t = await overToybox({ capture: false });
     try {
       await t.client.callTool({ name: "create_contact", arguments: { name: "Alan Turing", email: "alan@bletchley.uk" } });
       await t.client.callTool({ name: "delete_contact", arguments: { id: 1 } });
       const rows = t.ledger.listEffects(t.proxy.currentSessionId as string);
-      expect(rows.map((r) => [r.status, r.undo_status, r.pre_state_json, r.undo_json])).toEqual([
-        ["ok", "none", null, null],
-        ["ok", "none", null, null],
-      ]);
+      // create_contact declares no capture: its inverse derives from the result alone, so the
+      // flag does not touch it — still R by pack, still planned.
+      expect(rows[0]).toMatchObject({ tool: "create_contact", class: "R", class_source: "pack", undo_status: "planned", pre_state_json: null });
+      expect(undoOf(rows[0]!)).toEqual({ kind: "tool_call", server: "toybox", tool: "delete_contact", args: { id: 4 } });
+      // delete_contact needs the capture read the flag just switched off: inert — no read runs,
+      // no pre-state, no plan, and no R (an inverse whose pre-state will never exist is unknown).
+      expect(rows[1]).toMatchObject({ tool: "delete_contact", class: "unknown", undo_status: "none", pre_state_json: null, undo_json: null });
     } finally {
       await t.close();
     }
@@ -230,7 +243,7 @@ describe("capture hook against a controllable downstream (failure modes and gate
     const f = fake();
     const ledger = new Ledger(join(dir, "ledger.db"), ledgerOpts);
     const config = parseConfig({ servers: { fake: { command: "unused" } }, ...extra });
-    const proxy = new SagazProxy(config, { log: () => {}, ledger, connect: f.connect, packs, ...opts });
+    const proxy = new SagazProxy(config, { log: () => {}, ledger, connect: f.connect, packs: packOf(packs), ...opts });
     await proxy.start();
     const client = await connectClient(proxy);
     const close = async () => {
@@ -280,6 +293,25 @@ describe("capture hook against a controllable downstream (failure modes and gate
       expect(row).toMatchObject({ status: "blocked", undo_status: "none", pre_state_json: null, undo_json: null });
     } finally {
       await t.close();
+    }
+  });
+
+  it("a ledger-less proxy treats packs as inert: no R by pack where no plan could ever be stored", async () => {
+    // Without a ledger there is no pre-state and no plan — claiming R would wave the call
+    // through any policy that trusts R. Observable through the gate: unknown blocks, R would not.
+    const f = fake();
+    const config = parseConfig({ servers: { fake: { command: "unused" } }, policy: { class: { unknown: "block" } } });
+    const proxy = new SagazProxy(config, { log: () => {}, connect: f.connect, packs: packOf(packWith("read_thing")) });
+    await proxy.start();
+    const client = await connectClient(proxy);
+    try {
+      const r = (await client.callTool({ name: "delete_thing", arguments: { id: 7 } })) as CallToolResult;
+      expect(r.isError).toBe(true);
+      expect(text(r)).toContain("Sagaz blocked this call");
+      expect(f.calls).toEqual({});
+    } finally {
+      await client.close();
+      await proxy.close();
     }
   });
 

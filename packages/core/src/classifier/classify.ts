@@ -5,19 +5,25 @@
  * Precedence (first hit wins):
  *   1. user rules from sagaz.config.json — ALWAYS win: annotations are the server's
  *      declaration, not revealed truth, and the user is the only one who knows their world
- *   2. MCP tool annotations — readOnlyHint: true → read
- *   3. built-in name heuristics (see heuristics.ts)
- *   4. unknown
+ *   2. compensation packs (T11) — a matching entry means the inverse is DECLARED and its
+ *      pre-state will be captured: exactly what "R = known inverse" demands, so → R
+ *   3. MCP tool annotations — readOnlyHint: true → read
+ *   4. built-in name heuristics (see heuristics.ts)
+ *   5. unknown
  *
  * destructiveHint: true is not a class by itself (destructive ≠ irreversible, and it says
  * nothing about whether an inverse is known). It acts as a cap: whatever the heuristics say,
  * the result can never be R. (Settled at the T7 checkpoint under the "R = known inverse" rule.)
+ * The cap does NOT apply to an R by pack: it existed precisely because the inverse was
+ * unknown, and a pack is the inverse being known.
  *
  * The classifier only annotates — it never blocks. What happens next is policy/ (gates).
  */
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { ClassificationRule } from "../config.js";
+import { globToRegExp } from "../glob.js";
 import type { ClassSource, EffectClass } from "../ledger/ledger.js";
+import { matchPack, type CompensationPack } from "../undo/packs.js";
 import { matchHeuristic } from "./heuristics.js";
 
 export interface Classification {
@@ -32,12 +38,14 @@ export interface ClassifyInput {
   server: string;
   annotations?: ToolAnnotations | undefined;
   rules?: readonly ClassificationRule[] | undefined;
-}
-
-/** Glob with `*` as the only wildcard (any run of characters, including none). Anchored. */
-export function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern.split("*").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
-  return new RegExp(`^${escaped}$`);
+  /**
+   * Compensation packs IN FORCE — the caller filters before classifying: with
+   * `"capture": false` only capture-less entries remain (withoutCaptureEntries), and a
+   * ledger-less proxy passes none. An inverse whose pre-state will never be captured, or whose
+   * plan has nowhere to live, is an inverse Sagaz cannot execute — claiming R then would be a
+   * false reversible.
+   */
+  packs?: readonly CompensationPack[] | undefined;
 }
 
 export function matchRule(rules: readonly ClassificationRule[], tool: string, server: string): ClassificationRule | undefined {
@@ -49,6 +57,18 @@ export function classify(input: ClassifyInput): Classification {
   if (rule) {
     const scope = rule.server ? `${rule.server}/${rule.tool}` : rule.tool;
     return { class: rule.class, source: "user", reason: rule.reason ?? `user rule ${scope} → ${rule.class}` };
+  }
+
+  // T11: a pack entry closes the T6/T7 circle — R because the inverse is declared and the
+  // pre-state (when the inverse needs one) is captured before the call runs.
+  const packed = matchPack(input.packs ?? [], input.tool, input.server);
+  if (packed) {
+    const via = packed.entry.capture
+      ? "from the captured pre-state"
+      : Object.values(packed.entry.inverse.args).some((ref) => ref.startsWith("$.result"))
+        ? "from the result"
+        : "from the call's args";
+    return { class: "R", source: "pack", reason: `compensation pack "${packed.pack.name}": inverse ${packed.entry.inverse.tool} ${via}` };
   }
 
   const ann = input.annotations;

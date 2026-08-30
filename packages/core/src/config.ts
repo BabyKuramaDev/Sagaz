@@ -8,6 +8,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { DEFAULT_LEDGER_PATH, DEFAULT_MAX_RESULT_BYTES } from "./ledger/ledger.js";
+import { loadPackFile, parsePack } from "./undo/pack-format.js";
+import type { CompensationPack } from "./undo/packs.js";
 
 export const DEFAULT_CONFIG_PATH = "./sagaz.config.json";
 
@@ -101,9 +103,18 @@ const ConfigSchema = z.object({
    * Capture hook + undo plans (T10). When a mutating tool has a compensation pack entry, the
    * proxy runs the pack's capture read before forwarding and derives the undo plan after a
    * successful close. There is no per-tool switch by design: the capture runs whenever the pack
-   * exists, and this single global flag turns the whole mechanism off.
+   * exists, and this single global flag turns the CAPTURE off — not the undo (T11): pack
+   * entries that declare a capture read go inert with it (their pre-state would never exist,
+   * so neither can their R), while inverses derived without pre-state (create → delete from
+   * the result) keep classifying R and planning.
    */
   capture: z.boolean().default(true),
+  /**
+   * Compensation packs (T11): each element is an inline pack object or a path to a pack .json,
+   * relative to the config file (like everything else). Validated element by element in
+   * parseConfig for exact error messages; see undo/pack-format.ts for the format.
+   */
+  packs: z.array(z.unknown()).default([]),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
@@ -112,13 +123,19 @@ export type ClassificationRule = z.infer<typeof ClassificationRuleSchema>;
 export type PolicyAction = z.infer<typeof PolicyActionSchema>;
 export type PolicyToolRule = z.infer<typeof PolicyToolRuleSchema>;
 export type PolicyConfig = z.infer<typeof PolicySchema>;
-export type SagazConfig = z.infer<typeof ConfigSchema>;
+/** The parsed config: `packs` come out RESOLVED (paths loaded, every pack validated). */
+export type SagazConfig = Omit<z.infer<typeof ConfigSchema>, "packs"> & { packs: CompensationPack[] };
 
 export class ConfigError extends Error {
   override readonly name = "ConfigError";
 }
 
-export function parseConfig(raw: unknown, source = "sagaz.config.json"): SagazConfig {
+export interface ParseConfigOptions {
+  /** Directory pack file paths resolve against — loadConfig passes the config file's directory. */
+  baseDir?: string;
+}
+
+export function parseConfig(raw: unknown, source = "sagaz.config.json", opts: ParseConfigOptions = {}): SagazConfig {
   const result = ConfigSchema.safeParse(raw);
   if (!result.success) {
     const issues = result.error.issues.map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`).join("\n");
@@ -127,7 +144,27 @@ export function parseConfig(raw: unknown, source = "sagaz.config.json"): SagazCo
   if (Object.keys(result.data.servers).length === 0) {
     throw new ConfigError(`Invalid ${source}: "servers" must declare at least one downstream MCP server`);
   }
-  return result.data;
+  const packs = result.data.packs.map((p, i) => {
+    if (typeof p === "string") {
+      if (p.length === 0) throw new ConfigError(`Invalid ${source}: packs.${i} is an empty string — expected a path to a pack .json or an inline pack object`);
+      if (opts.baseDir === undefined) {
+        throw new ConfigError(`Invalid ${source}: packs.${i} is a file path ("${p}") but this config was not loaded from a file, so there is nothing to resolve it against — inline the pack object instead`);
+      }
+      return loadPackFile(resolve(opts.baseDir, p));
+    }
+    return parsePack(p, `packs.${i} of ${source}`);
+  });
+  // Pack names are identity (sagaz packs, class_reason, collision errors): duplicates are a
+  // conflict to fix, never something to merge or shadow silently.
+  const seen = new Map<string, number>();
+  for (const [i, pack] of packs.entries()) {
+    const first = seen.get(pack.name);
+    if (first !== undefined) {
+      throw new ConfigError(`Invalid ${source}: two packs are named "${pack.name}" (packs.${first} and packs.${i}) — pack names must be unique, rename one`);
+    }
+    seen.set(pack.name, i);
+  }
+  return { ...result.data, packs };
 }
 
 /** Loads and validates a config file, resolving each server's `cwd` against the file's directory. */
@@ -145,8 +182,8 @@ export async function loadConfig(path = DEFAULT_CONFIG_PATH): Promise<SagazConfi
   } catch (err) {
     throw new ConfigError(`Config at ${abs} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const config = parseConfig(raw, abs);
   const base = dirname(abs);
+  const config = parseConfig(raw, abs, { baseDir: base });
   for (const server of Object.values(config.servers)) {
     if (server.cwd !== undefined) server.cwd = resolve(base, server.cwd);
   }

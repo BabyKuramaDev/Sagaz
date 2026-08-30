@@ -1,9 +1,10 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CORE_VERSION, ConfigError, DEFAULT_CONFIG_PATH, Ledger, LedgerNotFoundError, SagazProxy, ToolCollisionError, loadConfig } from "sagaz-core";
+import { CORE_VERSION, ConfigError, DEFAULT_CONFIG_PATH, Ledger, LedgerNotFoundError, PackCollisionError, PackError, SagazProxy, ToolCollisionError, loadConfig } from "sagaz-core";
 import { UsageError, parseFlags } from "./args.js";
 import { LookupError, type CommandIO } from "./commands/context.js";
 import { decideCommand } from "./commands/approve.js";
 import { ledgerCommand } from "./commands/ledger.js";
+import { packsCommand } from "./commands/packs.js";
 import { pendingCommand } from "./commands/pending.js";
 import { previewReportCommand } from "./commands/preview-report.js";
 import { statusCommand } from "./commands/status.js";
@@ -19,6 +20,7 @@ Usage:
       --session <id|last>  --tool <name>  --status <pending|ok|error|blocked|dry>  --json
   sagaz status [--last <n>]           Sessions, ledger location, overall state
   sagaz verify [--session <id|last>]  Walk the hash chain and report OK or the first break
+  sagaz packs                         Loaded compensation packs and downstream coverage
   sagaz pending                       Calls held by a confirm gate, waiting for you
   sagaz approve <id> [--by <name>]    Let a held call through
   sagaz deny <id> [--by <name>]       Refuse a held call (the agent is told, nothing runs)
@@ -56,6 +58,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return statusCommand(parsed, configPath, io);
     case "verify":
       return verifyCommand(parsed, configPath, io);
+    case "packs":
+      return packsCommand(parsed, configPath, io);
     case "pending":
       return pendingCommand(parsed, configPath, io);
     case "approve":
@@ -109,7 +113,8 @@ main(process.argv.slice(2)).then(
       return;
     }
     const known =
-      err instanceof ConfigError || err instanceof ToolCollisionError || err instanceof LedgerNotFoundError || err instanceof LookupError ||
+      err instanceof ConfigError || err instanceof PackError || err instanceof PackCollisionError ||
+      err instanceof ToolCollisionError || err instanceof LedgerNotFoundError || err instanceof LookupError ||
       (err instanceof Error && err.name === "SqliteError");
     process.stderr.write(`sagaz: ${known ? err.message : err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`);
     process.exitCode = 1;

@@ -23,7 +23,8 @@
     "sagaz-toybox": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "sagaz-pack.json"
   ],
   "engines": {
     "node": ">=20"

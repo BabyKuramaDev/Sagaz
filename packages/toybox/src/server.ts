@@ -59,8 +59,15 @@ export function createToyboxServer(world: World, opts: { version?: string } = {}
   server.registerTool(
     "create_contact",
     {
-      description: "Create a CRM contact. Email must be unique. company may be null (no company).",
-      inputSchema: { name: z.string().min(1), email: z.string().email(), company: z.string().nullable().optional() },
+      description:
+        "Create a CRM contact. Email must be unique. company may be null (no company). " +
+        "id is optional and restores a previously deleted contact under its original identity (restore semantics); omit it for new contacts.",
+      inputSchema: {
+        id: z.number().int().positive().optional(),
+        name: z.string().min(1),
+        email: z.string().email(),
+        company: z.string().nullable().optional(),
+      },
       // no annotations on purpose
     },
     tool((a) => world.createContact(a)),

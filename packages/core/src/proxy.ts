@@ -34,7 +34,7 @@ import { PREFIX_SEPARATOR, type SagazConfig, type ServerConfig } from "./config.
 import { classify, type Classification } from "./classifier/index.js";
 import { configHash, type EffectStatus, type Ledger } from "./ledger/index.js";
 import { PREVIEW_INSTRUCTIONS, evaluatePolicy, gateResult, previewResult, type GateOutcome, type PolicyVerdict } from "./policy/index.js";
-import { TOYBOX_TEST_PACK, mapArgs, matchPackEntry, payloadOf, type PackEntry, type UndoNoPlan, type UndoToolCall } from "./undo/index.js";
+import { mapArgs, matchPack, matchPackEntry, payloadOf, withoutCaptureEntries, type CompensationPack, type PackEntry, type PackMatch, type UndoNoPlan, type UndoToolCall } from "./undo/index.js";
 
 export const PROXY_NAME = "sagaz";
 
@@ -50,6 +50,10 @@ type CaptureOutcome = { preState: CallToolResult } | { failure: string };
 
 export class ToolCollisionError extends Error {
   override readonly name = "ToolCollisionError";
+}
+
+export class PackCollisionError extends Error {
+  override readonly name = "PackCollisionError";
 }
 
 interface Route {
@@ -77,18 +81,37 @@ export interface ProxyOptions {
   approvalPollMs?: number;
   /** Effect preview for the whole session (`sagaz serve --preview`). Also enabled by `preview: true` in the config. */
   preview?: boolean;
-  /**
-   * Compensation pack entries. INTERNAL / PROVISIONAL: defaults to the hardcoded toybox test
-   * pack until T11 loads real packs from the config; injectable so tests can force capture
-   * failures. See undo/packs.ts.
-   */
-  packs?: readonly PackEntry[];
+  /** Compensation packs. Defaults to the config's loaded `packs`; injectable for tests. */
+  packs?: readonly CompensationPack[];
   /** How long a capture read may run before the effect proceeds without a pre-state (ms). */
   captureTimeoutMs?: number;
 }
 
 export function exposedName(server: ServerConfig, downstreamName: string): string {
   return server.prefix ? `${server.prefix}${PREFIX_SEPARATOR}${downstreamName}` : downstreamName;
+}
+
+/**
+ * Pure: two packs covering the same downstream tool is a startup error, in the same spirit as
+ * tool collisions — there is no defined order between packs, and picking an inverse by luck is
+ * exactly the kind of magic Sagaz refuses to do. Within ONE pack, entry order is the author's
+ * and first match wins.
+ */
+export function assertNoPackCollisions(packs: readonly CompensationPack[], toolsByServer: Map<string, Tool[]>): void {
+  for (const [server, tools] of toolsByServer) {
+    for (const tool of tools) {
+      const matches = packs
+        .map((pack) => ({ pack, entry: matchPackEntry(pack.entries, tool.name, server) }))
+        .filter((m): m is PackMatch => m.entry !== undefined);
+      if (matches.length > 1) {
+        const who = matches.map((m) => `pack "${m.pack.name}" (entry "${m.entry.tool}")`).join(" and ");
+        throw new PackCollisionError(
+          `Compensation pack collision: tool "${tool.name}" on server "${server}" is covered by ${who}.\n` +
+            `Sagaz never picks an inverse by magic. Narrow one of the entries (exact tool name instead of a glob, or a "server" restriction) or remove one of the packs.`,
+        );
+      }
+    }
+  }
 }
 
 /** Pure: builds the routing table or throws a ToolCollisionError with the suggested fix. */
@@ -133,7 +156,12 @@ export class SagazProxy {
   private readonly ledger: Ledger | undefined;
   private readonly approvalPollMs: number | undefined;
   private readonly preview: boolean;
-  private readonly packs: readonly PackEntry[];
+  /**
+   * Packs in force. `"capture": false` turns off the capture, not the undo: entries that
+   * declare a capture read go inert (their pre-state would never exist), result-derived
+   * inverses stay active. A ledger-less proxy keeps none — nowhere to store a plan.
+   */
+  private readonly packs: readonly CompensationPack[];
   private readonly captureTimeoutMs: number;
   private sessionId: string | undefined;
 
@@ -147,7 +175,10 @@ export class SagazProxy {
     this.ledger = opts.ledger;
     this.approvalPollMs = opts.approvalPollMs;
     this.preview = Boolean(opts.preview || config.preview);
-    this.packs = opts.packs ?? TOYBOX_TEST_PACK;
+    // Packs need the ledger: without one there is nowhere to store a pre-state or a plan, so
+    // claiming R by pack would be a false reversible.
+    const packs = opts.ledger ? (opts.packs ?? config.packs) : [];
+    this.packs = config.capture ? packs : withoutCaptureEntries(packs);
     this.captureTimeoutMs = opts.captureTimeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
   }
 
@@ -213,6 +244,7 @@ export class SagazProxy {
   private async collectRoutes(): Promise<Map<string, Route>> {
     const toolsByServer = new Map<string, Tool[]>();
     for (const d of this.downstreams) toolsByServer.set(d.name, await listAllTools(d.client));
+    assertNoPackCollisions(this.packs, toolsByServer);
     return buildRoutes(this.config, toolsByServer);
   }
 
@@ -265,6 +297,7 @@ export class SagazProxy {
       server: route.server,
       annotations: route.tool.annotations,
       rules: this.config.rules,
+      packs: this.packs,
     });
     const verdict = evaluatePolicy({ tool: route.downstreamName, server: route.server, class: classification.class, policy: this.config.policy });
     const effectId =
@@ -293,7 +326,7 @@ export class SagazProxy {
     // surfaced: Sagaz observes and protects, it does not break the agent's call.
     // (In preview only reads reach this point and nothing needs undoing, so the hook stays off;
     // without a ledger there is nowhere to store a pre-state or a plan, so nothing is read either.)
-    const pack = this.ledger && this.config.capture && !this.preview ? matchPackEntry(this.packs, route.downstreamName, route.server) : undefined;
+    const pack = this.ledger && !this.preview ? matchPack(this.packs, route.downstreamName, route.server)?.entry : undefined;
     const captured = pack?.capture ? await this.capture(pack.capture, downstream, effectId, args) : undefined;
 
     let result: CallToolResult;
@@ -453,6 +486,31 @@ export class SagazProxy {
       return stop("blocked", { ...(approvalId !== undefined ? { approvalId } : {}) });
     }
   }
+}
+
+/**
+ * Connects to every configured downstream, lists its tools and disconnects. What `sagaz packs`
+ * uses to compute coverage without serving anything. Same transports as the proxy; `connect`
+ * is injectable for tests exactly like ProxyOptions.connect.
+ */
+export async function probeDownstreamTools(
+  config: SagazConfig,
+  opts: { connect?: (name: string, config: ServerConfig) => Transport } = {},
+): Promise<Map<string, Tool[]>> {
+  const makeTransport = opts.connect ?? ((_name: string, cfg: ServerConfig) => spawnTransport(cfg));
+  const toolsByServer = new Map<string, Tool[]>();
+  const clients: Client[] = [];
+  try {
+    for (const [name, serverConfig] of Object.entries(config.servers)) {
+      const client = new Client({ name: PROXY_NAME, version: "probe" });
+      clients.push(client);
+      await client.connect(makeTransport(name, serverConfig));
+      toolsByServer.set(name, await listAllTools(client));
+    }
+  } finally {
+    await Promise.allSettled(clients.map((c) => c.close()));
+  }
+  return toolsByServer;
 }
 
 async function listAllTools(client: Client): Promise<Tool[]> {

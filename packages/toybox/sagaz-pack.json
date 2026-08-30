@@ -1,0 +1,48 @@
+{
+  "name": "toybox-crm",
+  "description": "Deterministic inverses (class R) for the sagaz-toybox CRM. Comms and bank tools are excluded on purpose — see the pack section of packages/toybox/README.md for why each one is C or I, not R.",
+  "entries": [
+    {
+      "tool": "create_contact",
+      "note": "The result carries the new contact's id; deleting that id is the exact inverse. No capture needed.",
+      "inverse": {
+        "tool": "delete_contact",
+        "args": { "id": "$.result.id" }
+      }
+    },
+    {
+      "tool": "delete_contact",
+      "note": "The whole contact is captured before the row dies, and the inverse restores identity, not just content: create_contact accepts the original id (restore semantics).",
+      "capture": {
+        "tool": "get_contact",
+        "args": { "id": "$.args.id" }
+      },
+      "inverse": {
+        "tool": "create_contact",
+        "args": {
+          "id": "$.pre_state.id",
+          "name": "$.pre_state.name",
+          "email": "$.pre_state.email",
+          "company": "$.pre_state.company"
+        }
+      }
+    },
+    {
+      "tool": "update_contact",
+      "note": "Updating back to the captured pre-state undoes any subset of fields; company: null (no company) is expressible on purpose.",
+      "capture": {
+        "tool": "get_contact",
+        "args": { "id": "$.args.id" }
+      },
+      "inverse": {
+        "tool": "update_contact",
+        "args": {
+          "id": "$.args.id",
+          "name": "$.pre_state.name",
+          "email": "$.pre_state.email",
+          "company": "$.pre_state.company"
+        }
+      }
+    }
+  ]
+}

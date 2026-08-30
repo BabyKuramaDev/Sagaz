@@ -43,6 +43,15 @@ describe("CRM (type R)", () => {
     expect(() => world.updateContact(2, { email: "ada@analytical.engine" })).toThrow(/already exists/);
     expect(world.updateContact(2, { email: "grace@cobol.navy" }).email).toBe("grace@cobol.navy");
   });
+  it("restore semantics (T11): create_contact with an explicit id brings a deleted contact back AS the row it was", () => {
+    const dead = world.deleteContact(2);
+    const restored = world.createContact({ id: dead.id, name: dead.name, email: dead.email, company: dead.company });
+    expect(restored).toMatchObject({ id: 2, name: "Grace Hopper", email: "grace@cobol.navy", company: "US Navy" });
+    // The sequence stays above any restored id: the next auto id never collides.
+    expect(world.createContact({ name: "Next", email: "next@auto.id" }).id).toBe(4);
+    // A live id is identity, not a slot to overwrite.
+    expect(() => world.createContact({ id: 1, name: "Clash", email: "clash@x.io" })).toThrow(/Contact 1 already exists/);
+  });
 });
 
 describe("comms (type C)", () => {
