@@ -29,7 +29,8 @@ The world is built so that each domain lands in one class of the taxonomy on pur
 | Tool | Domain | Class | MCP annotations | Why |
 |---|---|---|---|---|
 | `list_contacts` | CRM | read | `readOnlyHint: true` | correctly annotated read |
-| `create_contact` | CRM | **R** | *none* | inverse: `delete_contact` |
+| `get_contact` | CRM | read | `readOnlyHint: true` | the capture read: fetches the row an inverse of `delete_contact`/`update_contact` will need |
+| `create_contact` | CRM | **R** | *none* | inverse: `delete_contact`. Accepts `company: null` so an inverse derived from a captured pre-state can say "no company" |
 | `update_contact` | CRM | **R** | *none* | inverse: `update_contact` with the previous values (needs capture — by name alone the classifier says `unknown`) |
 | `delete_contact` | CRM | **R** | `destructiveHint: true` | inverse: `create_contact` with the deleted row (needs capture — by name alone the classifier says `unknown`) |
 | `send_email` | Comms | **C** | *none* | cannot be unsent; a correction can be sent with `in_reply_to` |
@@ -40,7 +41,7 @@ The world is built so that each domain lands in one class of the taxonomy on pur
 | `list_accounts` | Bank | read | `readOnlyHint: true` | correctly annotated read |
 | `transfer_funds` | Bank | **I** | *none* | **the trap**: moves money, nothing in the metadata says "irreversible" |
 
-**Annotations are mixed on purpose.** The classifier cascades user rules → annotations → name heuristics → `unknown` (see [`packages/core/README.md`](../core/README.md)), and it needs both paths exercised: tools with correct hints (`list_contacts`, `list_inbox`, `list_accounts`, `delete_contact`, `delete_tweet`) and tools with none (`create_contact`, `update_contact`, `send_email`, `post_tweet`, `list_timeline`, `transfer_funds`).
+**Annotations are mixed on purpose.** The classifier cascades user rules → annotations → name heuristics → `unknown` (see [`packages/core/README.md`](../core/README.md)), and it needs both paths exercised: tools with correct hints (`list_contacts`, `get_contact`, `list_inbox`, `list_accounts`, `delete_contact`, `delete_tweet`) and tools with none (`create_contact`, `update_contact`, `send_email`, `post_tweet`, `list_timeline`, `transfer_funds`).
 
 **Deferred:** `drop_everything` (wipe the whole world in one call, the SPEC's example of a catastrophic tool) is intentionally not implemented yet; it lands with the Phase 2 rollback demo.
 
