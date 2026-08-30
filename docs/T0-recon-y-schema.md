@@ -87,7 +87,7 @@ CREATE TABLE effects (
                    ('pending','ok','error','blocked','dry')),
   class          TEXT CHECK (class IN ('read','R','C','I','unknown')),
   class_source   TEXT CHECK (class_source IN
-                   ('annotation','rule','llm','user')),
+                   ('annotation','rule','llm','user','pack')),  -- 'pack' desde §4d (T11)
   class_reason   TEXT,               -- humano-legible: "matched rule delete_*"
   undo_json      TEXT,               -- plan de compensación (descriptor declarativo)
   undo_status    TEXT NOT NULL DEFAULT 'none' CHECK (undo_status IN
@@ -168,3 +168,5 @@ Convenciones:
 Al especificar la Fase 2 (SPEC §6c) se auditó qué toca del contrato del ledger. Resultado: casi nada. `pre_state_json` (dentro del hash, escrito una sola vez al cierre), `undo_json`/`undo_status` (ciclo de vida, fuera de la cadena) y `compensates_id` ya existen en el schema congelado con exactamente la semántica que T10–T12 necesitan (§3, decisiones 1, 5 y 6). El rollback de T12 abre su propia sesión en el ledger, así que la invariante de un-solo-escritor (§4b.2) tampoco se toca — la regla "la CLI no escribe en `effects`" (§4c.5) era del canal de approvals, no una ley general.
 
 Lo único que no cierra: T11 clasifica **R** a los efectos con inversa derivable por pack, y el CHECK de `class_source` (§3) solo admite `('annotation','rule','llm','user')` — no hay valor para "lo decidió un pack". Conflarlo con `'rule'` (heurística built-in) o `'user'` (regla del usuario) rompería la proveniencia, que existe justamente para debuggear el clasificador (§3, decisión 4). Enmienda: `class_source` gana el valor **`'pack'`**. Es la primera enmienda que toca la tabla `effects`; como SQLite no permite alterar un CHECK, la migración (rebuild de tabla) va dentro de T11. La cadena de hashes no cambia: `class_source` no participa del payload canónico (verificado en `packages/core/src/ledger/hash.ts` — las 12 claves canónicas no lo incluyen), así que las filas históricas siguen verificando igual.
+
+**Aplicada (T11, 30-08-2026).** `migrateClassSourcePack` en `packages/core/src/ledger/schema.ts`: rebuild transaccional al abrir el ledger en modo escritura (procedimiento documentado de SQLite, FKs off + `foreign_key_check` antes del commit), idempotente; una apertura readonly no migra — leer filas viejas no lo necesita, solo escribir `'pack'`. Filas copiadas verbatim, cadena intacta; test en `packages/core/test/migration.test.ts` (ledger pre-T11 real: pre-estado, approval, fila pending de crash → migra sin perder filas y `verify` OK).
