@@ -40,7 +40,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "zod": "^4.5.4",
     "better-sqlite3": "^12.11.1"
   },
